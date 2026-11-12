@@ -71,6 +71,7 @@ export function advanceCameraRig(
   dt: number,
   tuning: PlayerTuning,
   headingFromFacing = false,
+  contain?: { center: Vec3; radius: number; margin?: number },
 ): CameraAim {
   const next = cloneRig(rig);
   const lookActive = Math.hypot(look.lookX, look.lookY) > 0.2;
@@ -125,16 +126,64 @@ export function advanceCameraRig(
   const up = length(playerUp) > VECTOR_EPSILON ? playerUp : VEC3_UP;
   next.up = slerpDir(next.up, up, 1 - Math.exp(-tuning.cameraUpFollow * dt));
   const forward = length(facing) > VECTOR_EPSILON ? facing : VEC3_FORWARD;
+  const frameUp = headingFromFacing ? up : next.up;
   const lookAt = add(
-    add(playerPosition, scale(next.up, tuning.cameraHeight)),
+    add(playerPosition, scale(frameUp, tuning.cameraHeight)),
     scale(forward, tuning.cameraLookAhead),
   );
   next.lookAt = dampVec(next.lookAt, lookAt, tuning.cameraPosFollow, dt);
 
+  if (headingFromFacing && next.pitch > Math.acos(0.7)) next.pitch = Math.acos(0.7);
+  if (headingFromFacing && contain) {
+    next.distance = containedLoopDistance(
+      next.lookAt,
+      forward,
+      frameUp,
+      next.pitch,
+      next.distance,
+      contain.center,
+      contain.radius,
+      contain.margin ?? 0.3,
+    );
+  }
   const offset = headingFromFacing
-    ? loopFrameOffset(forward, next.up, next.pitch, next.distance)
+    ? loopFrameOffset(forward, frameUp, next.pitch, next.distance)
     : cameraOffset(next.yaw, next.pitch, next.distance);
   return { rig: next, lookAt: next.lookAt, desired: add(next.lookAt, offset) };
+}
+
+/**
+ * Shortens a loop-ride offset until the camera sits inside the ribbon.
+ * The final distance is what the scene uses, because the ride skips the wall cast.
+ */
+export function containedLoopDistance(
+  lookAt: Vec3,
+  tangent: Vec3,
+  up: Vec3,
+  pitch: number,
+  distance: number,
+  center: Vec3,
+  radius: number,
+  margin = 0.3,
+): number {
+  const limit = Math.max(0.5, radius - margin - 0.05);
+  const inside = (span: number): boolean => {
+    const offset = loopFrameOffset(tangent, up, pitch, span);
+    const x = lookAt.x + offset.x - center.x;
+    const y = lookAt.y + offset.y - center.y;
+    const z = lookAt.z + offset.z - center.z;
+    return x * x + y * y + z * z <= limit * limit;
+  };
+  if (inside(distance)) return distance;
+  let low = 0.5;
+  let high = distance;
+  if (!inside(low)) return low;
+  for (let step = 0; step < 14; step += 1) {
+    const mid = (low + high) / 2;
+    if (inside(mid)) low = mid;
+    else high = mid;
+  }
+  return low;
 }
 
 /**

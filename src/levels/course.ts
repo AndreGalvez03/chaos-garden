@@ -9,11 +9,17 @@ import { CreatePolyhedron } from "@babylonjs/core/Meshes/Builders/polyhedronBuil
 import { PhysicsAggregate } from "@babylonjs/core/Physics/v2/physicsAggregate";
 import { PhysicsShapeType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
 import type { Scene } from "@babylonjs/core/scene";
-import { buildLoopPath, loopExitDeck, type LoopCourse } from "../core/loop-path";
+import { buildLoopPath, LOOP_RADIUS, loopExitDeck, type LoopCourse } from "../core/loop-path";
 import type { Vec3 } from "../core/math";
 import { buildSpline, type Spline } from "../core/spline";
 import { LOOP_COLLISION_BIT, type SurfaceMeta } from "./surface";
-import { DEFAULT_TUNING } from "../player/tuning";
+
+/** Slope run shared with the approach deck so the two surfaces meet on one line. */
+const SLOPE_START_Z = 128;
+const SLOPE_RUN = 42;
+const SLOPE_RISE = 7;
+const APPROACH_END_Z = 204;
+const DECK_TOP = SLOPE_RISE;
 
 export interface CourseContent {
   rails: Spline[];
@@ -55,7 +61,7 @@ export function buildCourse(scene: Scene): CourseContent {
   sideWall(scene, tones.stone);
 
   const springDirection = normalize({ x: 0.28, y: 1, z: 0.42 });
-  spring(scene, "spring-yard", [-12, 0.35, -2], springDirection, tones.spring);
+  spring(scene, "spring-yard", [-12, 0, -2], springDirection, tones.spring);
   spring(scene, "spring-exit", [exit.x, exit.y, exit.z + 6], { x: 0, y: 1, z: 0.35 }, tones.spring);
 
   const targets: Vec3[] = [
@@ -79,9 +85,9 @@ function ledge(scene: Scene, material: StandardMaterial): void {
 }
 
 function slope(scene: Scene, material: StandardMaterial): void {
-  const run = 42;
-  const rise = 7;
-  const startZ = 128;
+  const run = SLOPE_RUN;
+  const rise = SLOPE_RISE;
+  const startZ = SLOPE_START_Z;
   const angle = Math.atan2(rise, run);
   const thickness = 0.4;
   const normal = new Vector3(0, Math.cos(angle), -Math.sin(angle));
@@ -105,7 +111,17 @@ function slope(scene: Scene, material: StandardMaterial): void {
 }
 
 function approach(scene: Scene, material: StandardMaterial): void {
-  box(scene, "loop-approach", [8, 0.7, 36], [0, 6.65, 186], material, { kind: "ground" });
+  const height = 0.7;
+  const startZ = SLOPE_START_Z + SLOPE_RUN;
+  const depth = APPROACH_END_Z - startZ;
+  box(
+    scene,
+    "loop-approach",
+    [8, height, depth],
+    [0, DECK_TOP - height / 2, startZ + depth / 2],
+    material,
+    { kind: "ground" },
+  );
 }
 
 function liftedLoop(scene: Scene, material: StandardMaterial): LoopCourse {
@@ -113,7 +129,7 @@ function liftedLoop(scene: Scene, material: StandardMaterial): LoopCourse {
     mouth: { x: 0, y: 7, z: 200 },
     forward: { x: 0, y: 0, z: 1 },
     up: { x: 0, y: 1, z: 0 },
-    radius: DEFAULT_TUNING.loopRadius,
+    radius: LOOP_RADIUS,
     lateralShift: 8,
     samples: 64,
   });
@@ -185,22 +201,29 @@ function sideWall(scene: Scene, material: StandardMaterial): void {
 function spring(
   scene: Scene,
   name: string,
-  position: [number, number, number],
+  surface: [number, number, number],
   direction: Vec3,
   material: StandardMaterial,
 ): void {
-  const pad = CreateCylinder(name, { height: 0.28, diameter: 1.5, tessellation: 10 }, scene);
-  pad.position.set(position[0], position[1], position[2]);
+  const height = 0.28;
+  const pad = CreateCylinder(name, { height, diameter: 1.5, tessellation: 10 }, scene);
+  pad.position.set(surface[0], surface[1] - height / 2, surface[2]);
   pad.material = material;
-  const unitDirection = normalize(direction);
-  pad.metadata = { kind: "spring", springDirection: unitDirection } satisfies SurfaceMeta;
   pad.computeWorldMatrix(true);
-  new PhysicsAggregate(
-    pad,
+
+  const unitDirection = normalize(direction);
+  const sensor = CreateBox(`${name}-sensor`, { width: 1.6, height: 0.06, depth: 1.6 }, scene);
+  sensor.position.set(surface[0], surface[1] + 0.04, surface[2]);
+  sensor.isVisible = false;
+  sensor.metadata = { kind: "spring", springDirection: unitDirection } satisfies SurfaceMeta;
+  sensor.computeWorldMatrix(true);
+  const aggregate = new PhysicsAggregate(
+    sensor,
     PhysicsShapeType.BOX,
-    { mass: 0, friction: 0.4, restitution: 0 },
+    { mass: 0, friction: 0, restitution: 0, isTriggerShape: true },
     scene,
   );
+  aggregate.shape.isTrigger = true;
 }
 
 function railMesh(scene: Scene, material: StandardMaterial): void {

@@ -10,6 +10,7 @@ import { Scene } from "@babylonjs/core/scene";
 import type { AppContext } from "../app/context";
 import type { Vec3 } from "../core/math";
 import { FIXED_STEP_SECONDS } from "../core/loop";
+import { sampleLoop } from "../core/loop-path";
 import { closestOnSpline } from "../core/spline";
 import { deviceLabel } from "../input/pad-profile";
 import type { DeviceKind, InputFrame } from "../input/types";
@@ -26,8 +27,10 @@ import {
 import {
   createControllerState,
   FALL_RESET_Y,
+  isSafeGroundSample,
   modeLabel,
   respawnPoint,
+  SAFE_EDGE_MARGIN,
   stepController,
   wishFromStick,
   type ControllerState,
@@ -149,12 +152,10 @@ export class PlaygroundScene {
     this.previousPos.copyFrom(this.hero.body.position);
     this.currentPos.copyFrom(this.hero.body.position);
     this.rig = createCameraRig(0, 0.42);
-    this.rig.lookAt = { x: YARD_SPAWN.x, y: YARD_SPAWN.y + 1, z: YARD_SPAWN.z };
-    this.rig.position = { x: YARD_SPAWN.x, y: YARD_SPAWN.y + 3, z: YARD_SPAWN.z - 6 };
     this.camera = new FreeCamera("follow", new Vector3(0, 3, -12), scene);
     this.camera.minZ = 0.05;
     this.ensureCameraSphere(scene);
-    this.seedCamera();
+    this.placeCamera(YARD_SPAWN);
     this.scene = scene;
     this.ready = true;
     this.menu.reset();
@@ -172,7 +173,7 @@ export class PlaygroundScene {
   beginFrame(input: InputFrame): void {
     if (!this.ready) return;
     this.lastDevice = input.device;
-    if (this.app.tuningUi.isVisible) this.app.tuningUi.steer(input.move.x, input.move.y);
+    if (this.app.tuningUi.isVisible) this.app.tuningUi.steer(input.padMove.x, input.padMove.y);
     if (input.tunePressed) this.toggleTuning();
     if (input.pausePressed) {
       if (this.lockLostThisFrame || !this.app.store.get().paused) {
@@ -266,16 +267,19 @@ export class PlaygroundScene {
       this.previousPos.copyFrom(this.safePos);
       this.supported = true;
       riding = false;
+      this.placeCamera(this.safePos);
     } else if (
       output.supported &&
       (output.state.mode === "idle" || output.state.mode === "run") &&
-      this.currentPos.y > FALL_RESET_Y
+      this.currentPos.y > FALL_RESET_Y &&
+      this.standIsSafe(this.currentPos)
     ) {
       this.safePos.copyFrom(this.currentPos);
     }
 
     body.getLinearVelocityToRef(this.bodyVelocity);
     const loopRide = this.sim.mode === "loopRun" && this.sim.loopDistance >= 0;
+    const contain = loopRide ? this.loopContain() : undefined;
     const aim = advanceCameraRig(
       this.rig,
       {
@@ -294,6 +298,7 @@ export class PlaygroundScene {
       step,
       tuning,
       loopRide,
+      contain,
     );
     const desiredDistance = Math.hypot(
       aim.desired.x - aim.lookAt.x,
@@ -432,7 +437,10 @@ export class PlaygroundScene {
       position.z - up.z * start,
     );
     this.rayTo.set(position.x - up.x * reach, position.y - up.y * reach, position.z - up.z * reach);
-    let hit = physics.raycast(this.rayFrom, this.rayTo, { ignoreBody: hero.aggregate.body });
+    let hit = physics.raycast(this.rayFrom, this.rayTo, {
+      ignoreBody: hero.aggregate.body,
+      shouldHitTriggers: true,
+    });
     if (!hit.hasHit && this.bodyVelocity.length() >= tuning.loopEnterSpeed) {
       const facing = this.sim.facing;
       this.rayFrom.set(position.x, position.y, position.z);
@@ -509,6 +517,67 @@ export class PlaygroundScene {
     const hit = physics.raycast(this.rayFrom, this.rayTo, { ignoreBody: body });
     if (!hit.hasHit) return null;
     return hit.hitDistance;
+  }
+
+  private placeCamera(at: Vector3): void {
+    this.rig.lookAt = { x: at.x, y: at.y + 1, z: at.z };
+    this.rig.position = { x: at.x, y: at.y + 3, z: at.z - 6 };
+    this.rig.up = { x: 0, y: 1, z: 0 };
+    this.rig.yaw = 0;
+    this.rig.pitch = 0.42;
+    this.rig.distance = 6;
+    this.seedCamera();
+    if (this.camera) {
+      this.camera.position.set(this.rig.position.x, this.rig.position.y, this.rig.position.z);
+      this.camera.upVector.set(0, 1, 0);
+      this.camTarget.set(this.rig.lookAt.x, this.rig.lookAt.y, this.rig.lookAt.z);
+      this.camera.setTarget(this.camTarget);
+    }
+  }
+
+  private loopContain(): { center: Vec3; radius: number } | undefined {
+    const course = this.course?.loop;
+    if (!course || this.sim.loopDistance < 0) return undefined;
+    const frame = sampleLoop(course, this.sim.loopDistance);
+    return {
+      center: {
+        x: frame.point.x + frame.up.x * course.radius,
+        y: frame.point.y + frame.up.y * course.radius,
+        z: frame.point.z + frame.up.z * course.radius,
+      },
+      radius: course.radius,
+    };
+  }
+
+  private standIsSafe(at: Vector3): boolean {
+    const margin = SAFE_EDGE_MARGIN;
+    const samples = [
+      this.groundSample(at.x, at.y, at.z),
+      this.groundSample(at.x + margin, at.y, at.z),
+      this.groundSample(at.x - margin, at.y, at.z),
+      this.groundSample(at.x, at.y, at.z + margin),
+      this.groundSample(at.x, at.y, at.z - margin),
+    ];
+    return samples.every((sample) => isSafeGroundSample(sample.hit, sample.kind, sample.normalY));
+  }
+
+  private groundSample(
+    x: number,
+    y: number,
+    z: number,
+  ): { hit: boolean; kind: string; normalY: number } {
+    const physics = this.scene?.getPhysicsEngine();
+    const hero = this.hero;
+    if (!physics || !hero) return { hit: false, kind: "ground", normalY: 0 };
+    this.rayFrom.set(x, y, z);
+    this.rayTo.set(x, y - 2, z);
+    const hit = physics.raycast(this.rayFrom, this.rayTo, {
+      ignoreBody: hero.aggregate.body,
+      shouldHitTriggers: false,
+    });
+    if (!hit.hasHit) return { hit: false, kind: "ground", normalY: 0 };
+    const surface = readSurface(hit.body?.transformNode.metadata);
+    return { hit: true, kind: surface.kind, normalY: hit.hitNormalWorld.y };
   }
 
   private seedCamera(): void {

@@ -4,6 +4,7 @@ import {
   buildLoopPath,
   closestLoop,
   LOOP_EXIT_DECK_DEPTH,
+  LOOP_RADIUS,
   loopExitDeck,
   sampleLoop,
   type LoopCourse,
@@ -550,8 +551,61 @@ describe("controller states", () => {
     );
     expect(entered.state.mode).toBe("loopRun");
     const moved = length(sub(entered.position, start));
+    expect(moved).toBeGreaterThan(32 * DT * 0.75);
     expect(moved).toBeLessThan(32 * DT + 0.35);
-    expect(entered.state.up.y).toBeGreaterThan(Math.cos((2.5 * Math.PI) / 180));
+  });
+
+  it("grabs a lateral offset of 0.85 m and ignores one past it", () => {
+    const course = loopCourse();
+    const inside = step(
+      body({
+        state: { ...createControllerState(), facing: { x: 0, y: 0, z: 1 } },
+        position: { x: 0.85, y: tuning.probeHalfHeight, z: 0.2 },
+        velocity: { x: 0, y: 0, z: 32 },
+      }),
+      actions({ wish: { x: 0, y: 0, z: 1 } }),
+      ground(),
+      { loopCourse: course },
+    );
+    const outside = step(
+      body({
+        state: { ...createControllerState(), facing: { x: 0, y: 0, z: 1 } },
+        position: { x: 1.05, y: tuning.probeHalfHeight, z: 0.2 },
+        velocity: { x: 0, y: 0, z: 32 },
+      }),
+      actions({ wish: { x: 0, y: 0, z: 1 } }),
+      ground(),
+      { loopCourse: course },
+    );
+    expect(inside.state.mode).toBe("loopRun");
+    expect(outside.state.mode).not.toBe("loopRun");
+  });
+
+  it("does not snap the up vector while blending onto the loop", () => {
+    const course = loopCourse();
+    for (const speed of [34, 40]) {
+      let runner = body({
+        state: { ...createControllerState(), facing: { x: 0, y: 0, z: 1 } },
+        position: { x: 0, y: tuning.probeHalfHeight, z: 0 },
+        velocity: { x: 0, y: 0, z: speed },
+      });
+      let previousUp = { ...runner.state.up };
+      let riding = false;
+      for (let frame = 0; frame < 40; frame += 1) {
+        const before = sampleLoop(course, Math.max(runner.state.loopDistance, 0));
+        runner = step(runner, actions({ wish: { x: 0, y: 0, z: 1 } }), ground({ hit: false }), {
+          loopCourse: course,
+        });
+        if (runner.state.mode !== "loopRun") continue;
+        riding = true;
+        const after = sampleLoop(course, runner.state.loopDistance);
+        const frameTurn = angleBetween(before.up, after.up);
+        const bodyTurn = angleBetween(previousUp, runner.state.up);
+        expect(bodyTurn).toBeLessThan(frameTurn + (3 * Math.PI) / 180 + 1e-4);
+        previousUp = { ...runner.state.up };
+      }
+      expect(riding).toBe(true);
+    }
   });
 
   it("leaves the loop straight and lands on a deck that reaches the exit spring", () => {
@@ -589,12 +643,19 @@ describe("controller states", () => {
   });
 });
 
+function angleBetween(from: Vec3, to: Vec3): number {
+  const a = Math.hypot(from.x, from.y, from.z) || 1;
+  const b = Math.hypot(to.x, to.y, to.z) || 1;
+  const cosine = (from.x * to.x + from.y * to.y + from.z * to.z) / (a * b);
+  return Math.acos(Math.min(1, Math.max(-1, cosine)));
+}
+
 function loopCourse(): LoopCourse {
   return buildLoopPath({
     mouth: { x: 0, y: 0, z: 0 },
     forward: { x: 0, y: 0, z: 1 },
     up: { x: 0, y: 1, z: 0 },
-    radius: tuning.loopRadius,
+    radius: LOOP_RADIUS,
     lateralShift: 8,
     samples: 64,
   });

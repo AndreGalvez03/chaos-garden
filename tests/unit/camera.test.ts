@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { length, sub } from "../../src/core/math";
-import { buildLoopPath, sampleLoop } from "../../src/core/loop-path";
+import { add, dot, length, scale, sub, type Vec3 } from "../../src/core/math";
+import { buildLoopPath, LOOP_RADIUS, sampleLoop } from "../../src/core/loop-path";
 import { FIXED_STEP_SECONDS } from "../../src/core/loop";
 import {
   advanceCameraRig,
   blendCameraRig,
-  cameraClearanceLimit,
   createCameraRig,
   resolveCameraPosition,
   smoothCameraClearance,
@@ -119,57 +118,67 @@ describe("follow camera", () => {
     expect(mid.fov).toBeCloseTo(1, 5);
   });
 
-  it("keeps heading and distance through a full loop", () => {
+  it("keeps the ride camera inside the loop and aimed at the runner", () => {
     const course = buildLoopPath({
       mouth: { x: 0, y: 0, z: 0 },
       forward: { x: 0, y: 0, z: 1 },
       up: { x: 0, y: 1, z: 0 },
-      radius: DEFAULT_TUNING.loopRadius,
+      radius: LOOP_RADIUS,
       lateralShift: 8,
       samples: 64,
     });
-    let rig = createCameraRig(0, 0.42);
-    const startYaw = rig.yaw;
-    let minDistance = Infinity;
-    const steps = 64;
-    for (let index = 0; index <= steps; index += 1) {
-      const frame = sampleLoop(course, (index / steps) * course.spline.length);
-      const position = {
-        x: frame.point.x + frame.up.x * 0.62,
-        y: frame.point.y + frame.up.y * 0.62,
-        z: frame.point.z + frame.up.z * 0.62,
-      };
-      const aim = advanceCameraRig(
-        rig,
-        look,
-        position,
-        frame.up,
-        {
-          x: frame.tangent.x * 32,
-          y: frame.tangent.y * 32,
-          z: frame.tangent.z * 32,
-        },
-        frame.tangent,
-        FIXED_STEP_SECONDS,
-        DEFAULT_TUNING,
-        true,
-      );
-      rig = aim.rig;
-      const yawDelta = Math.atan2(Math.sin(rig.yaw - startYaw), Math.cos(rig.yaw - startYaw));
-      expect(Math.abs(yawDelta)).toBeLessThan((20 * Math.PI) / 180);
-      minDistance = Math.min(
-        minDistance,
-        Math.hypot(
-          aim.desired.x - aim.lookAt.x,
-          aim.desired.y - aim.lookAt.y,
-          aim.desired.z - aim.lookAt.z,
-        ),
-      );
+    const pitches = [DEFAULT_TUNING.cameraPitchMin, 0.42, DEFAULT_TUNING.cameraPitchMax];
+    for (const pitch of pitches) {
+      for (const speed of [29, 34, 40]) {
+        let rig = createCameraRig(0, pitch);
+        let previousView: Vec3 | null = null;
+        const steps = 72;
+        for (let index = 0; index <= steps; index += 1) {
+          const frame = sampleLoop(course, (index / steps) * course.spline.length);
+          const position = add(frame.point, scale(frame.up, 0.62));
+          const center = add(frame.point, scale(frame.up, course.radius));
+          const repeats = index === 0 ? 90 : 1;
+          let aim = advanceCameraRig(
+            rig,
+            look,
+            position,
+            frame.up,
+            scale(frame.tangent, speed),
+            frame.tangent,
+            FIXED_STEP_SECONDS,
+            DEFAULT_TUNING,
+            true,
+            { center, radius: course.radius },
+          );
+          for (let extra = 1; extra < repeats; extra += 1) {
+            aim = advanceCameraRig(
+              aim.rig,
+              look,
+              position,
+              frame.up,
+              scale(frame.tangent, speed),
+              frame.tangent,
+              FIXED_STEP_SECONDS,
+              DEFAULT_TUNING,
+              true,
+              { center, radius: course.radius },
+            );
+          }
+          rig = aim.rig;
+          const view = sub(aim.lookAt, aim.desired);
+          const viewLength = length(view);
+          const tangentLength = length(frame.tangent) || 1;
+          expect(viewLength).toBeGreaterThan(0.5);
+          expect(dot(view, frame.tangent) / (viewLength * tangentLength)).toBeGreaterThan(0.5);
+          expect(length(sub(aim.desired, center))).toBeLessThan(course.radius - 0.3);
+          if (previousView) {
+            const turn = angleBetween(previousView, view);
+            expect(turn).toBeLessThan((25 * Math.PI) / 180);
+          }
+          previousView = view;
+        }
+      }
     }
-    expect(minDistance).toBeGreaterThan(3);
-    const shortened = cameraClearanceLimit(minDistance, 1.2, false, DEFAULT_TUNING);
-    expect(shortened).toBeLessThan(2);
-    expect(cameraClearanceLimit(minDistance, 1.2, true, DEFAULT_TUNING)).toBe(minDistance);
   });
 
   it("snaps the camera in toward a wall and eases it back out", () => {
@@ -189,3 +198,10 @@ describe("follow camera", () => {
     );
   });
 });
+
+function angleBetween(from: Vec3, to: Vec3): number {
+  const left = length(from) || 1;
+  const right = length(to) || 1;
+  const cosine = dot(from, to) / (left * right);
+  return Math.acos(Math.min(1, Math.max(-1, cosine)));
+}

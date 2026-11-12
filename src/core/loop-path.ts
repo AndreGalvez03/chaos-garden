@@ -10,6 +10,9 @@ export interface LoopFrame {
   gap: number;
 }
 
+/** Built loop radius. The course and the finish-speed check both use this. */
+export const LOOP_RADIUS = 7;
+
 /** Landing deck length, and how far that deck starts before the exit point. */
 export const LOOP_EXIT_DECK_DEPTH = 32;
 export const LOOP_EXIT_DECK_LEAD = 2;

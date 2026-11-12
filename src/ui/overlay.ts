@@ -16,16 +16,27 @@ export interface PlayHudState {
   onCredits: () => void;
 }
 
+let failureShown = false;
+
 export function showFailure(root: HTMLElement, error: unknown): void {
+  if (failureShown) return;
+  failureShown = true;
   const message = error instanceof Error ? error.message : "The view failed to start.";
   root.replaceChildren();
   const panel = document.createElement("section");
   panel.className = "panel";
+  panel.setAttribute("role", "alert");
   const heading = document.createElement("h1");
   heading.textContent = GAME_TITLE;
   const body = document.createElement("p");
   body.textContent = message;
-  panel.append(heading, body);
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.textContent = "Retry";
+  retry.addEventListener("click", () => {
+    window.location.reload();
+  });
+  panel.append(heading, body, retry);
   root.append(panel);
   console.error(error);
 }

@@ -1,39 +1,10 @@
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const root = path.resolve(import.meta.dirname, "../..");
-
-const cruiseConfig = `/** @type {import('dependency-cruiser').IConfiguration} */
-export default {
-  forbidden: [
-    {
-      name: "core-stays-free-of-the-renderer",
-      severity: "error",
-      from: { path: "^src/core" },
-      to: { path: "node_modules/@babylonjs", reachable: true },
-    },
-    {
-      name: "pets-stay-free-of-the-renderer",
-      severity: "error",
-      from: { path: "^src/pets" },
-      to: { path: "node_modules/@babylonjs", reachable: true },
-    },
-  ],
-  options: {
-    doNotFollow: { path: "node_modules" },
-    tsPreCompilationDeps: true,
-    tsConfig: { fileName: "tsconfig.json" },
-    enhancedResolveOptions: {
-      exportsFields: ["exports"],
-      conditionNames: ["import", "types", "default"],
-      mainFields: ["module", "main", "types"],
-    },
-  },
-};
-`;
 
 describe("module boundaries", () => {
   it("fails when Babylon is imported under core, including through another core file", () => {
@@ -62,27 +33,24 @@ describe("module boundaries", () => {
 function cruise(files: Record<string, string>): { status: number | null; output: string } {
   const dir = mkdtempSync(path.join(tmpdir(), "chaos-boundaries-"));
   try {
-    expect(dir.startsWith(tmpdir())).toBe(true);
+    expect(path.resolve(dir).startsWith(path.resolve(tmpdir()))).toBe(true);
     mkdirSync(path.join(dir, "src/core"), { recursive: true });
     mkdirSync(path.join(dir, "src/pets"), { recursive: true });
     for (const [relative, contents] of Object.entries(files)) {
       writeFileSync(path.join(dir, relative), contents);
     }
-    writeFileSync(
-      path.join(dir, "tsconfig.json"),
-      JSON.stringify({
-        compilerOptions: {
-          target: "ES2022",
-          module: "ESNext",
-          moduleResolution: "bundler",
-          strict: true,
-        },
-        include: ["src"],
-      }),
+    copyFileSync(path.join(root, "tsconfig.json"), path.join(dir, "tsconfig.json"));
+    copyFileSync(
+      path.join(root, "dependency-cruiser.config.mjs"),
+      path.join(dir, "dependency-cruiser.config.mjs"),
     );
-    writeFileSync(path.join(dir, "dependency-cruiser.config.mjs"), cruiseConfig);
-    symlinkSync(path.join(root, "node_modules"), path.join(dir, "node_modules"));
-    const bin = path.join(root, "node_modules/dependency-cruiser/bin/dependency-cruiser.mjs");
+    const linked = spawnSync("cp", [
+      "-al",
+      path.join(root, "node_modules"),
+      path.join(dir, "node_modules"),
+    ]);
+    expect(linked.status).toBe(0);
+    const bin = path.join(dir, "node_modules/dependency-cruiser/bin/dependency-cruiser.mjs");
     const result = spawnSync(
       process.execPath,
       [bin, "src", "--config", "dependency-cruiser.config.mjs", "--output-type", "err"],

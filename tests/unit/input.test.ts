@@ -50,6 +50,7 @@ describe("evaluateInput", () => {
       bindings,
     );
     expect(frame.move).toEqual({ x: 1, y: 1 });
+    expect(frame.padMove).toEqual({ x: 0, y: 0 });
     expect(frame.device).toBe("keyboard");
   });
 
@@ -65,6 +66,7 @@ describe("evaluateInput", () => {
     );
     expect(frame.move.x).toBeCloseTo(0, 5);
     expect(frame.move.y).toBeCloseTo(1, 5);
+    expect(frame.padMove.y).toBeCloseTo(1, 5);
     expect(frame.device).toBe("xbox");
   });
 

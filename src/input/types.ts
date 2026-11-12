@@ -10,6 +10,8 @@ export interface Vec2 {
 /** One polled sample. Analog values are in the range -1..1. */
 export interface InputFrame {
   move: Vec2;
+  /** Gamepad stick or d-pad only. Keyboard movement stays in `move`. */
+  padMove: Vec2;
   /** Stick and keys. Positive x turns right. Positive y looks up. */
   camera: Vec2;
   /** Pixel deltas for this frame. Positive mouseY is downward. */
@@ -40,6 +42,7 @@ export interface DigitalDown {
 export function emptyInputFrame(device: DeviceKind = "keyboard"): InputFrame {
   return {
     move: { x: 0, y: 0 },
+    padMove: { x: 0, y: 0 },
     camera: { x: 0, y: 0 },
     mouse: { x: 0, y: 0 },
     jump: false,

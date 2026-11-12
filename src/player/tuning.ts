@@ -1,3 +1,5 @@
+import { LOOP_RADIUS } from "../core/loop-path";
+
 /**
  * Every gameplay and camera number the controller reads.
  * Sliders edit a copy of these defaults. Nothing here is written to disk.
@@ -53,7 +55,6 @@ export interface PlayerTuning {
   springLockTime: number;
   loopEnterSpeed: number;
   loopExitSpeed: number;
-  loopRadius: number;
   loopBlendTime: number;
   loopUprightDot: number;
   loopEntryWindow: number;
@@ -457,7 +458,6 @@ const FIELDS: readonly TunableSpec[] = [
     step: 0.5,
     value: 29,
   },
-  { key: "loopRadius", label: "Loop radius", group: "Loop", min: 4, max: 12, step: 0.1, value: 7 },
   {
     key: "loopBlendTime",
     label: "Loop blend time",
@@ -839,7 +839,7 @@ export function validateTuning(tuning: PlayerTuning): string[] {
   }
   const loopFinish = Math.sqrt(
     tuning.loopExitSpeed ** 2 +
-      4 * tuning.gravity * tuning.loopRadius * Math.max(tuning.slopeInfluence, 0),
+      4 * tuning.gravity * LOOP_RADIUS * Math.max(tuning.slopeInfluence, 0),
   );
   if (tuning.loopEnterSpeed + 0.05 < loopFinish) {
     errors.push("Loop entry speed must be enough to finish the loop.");

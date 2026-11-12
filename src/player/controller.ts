@@ -130,6 +130,14 @@ const MODE_LABELS: Record<PlayerMode, string> = {
 /** Below this height the runner is put back on the last safe ground. */
 export const FALL_RESET_Y = -20;
 
+/** A saved step must be this flat, and this far from every edge. */
+export const SAFE_FLAT_DOT = 0.95;
+export const SAFE_EDGE_MARGIN = 1;
+
+export function isSafeGroundSample(hit: boolean, kind: string, normalY: number): boolean {
+  return hit && kind === "ground" && normalY >= SAFE_FLAT_DOT;
+}
+
 export function respawnPoint(height: number, safe: Vec3): Vec3 | null {
   if (height >= FALL_RESET_Y) return null;
   return { x: safe.x, y: safe.y, z: safe.z };
@@ -908,7 +916,9 @@ function tryLoopRide(
   if (!course || state.loopCooldown > 0) return null;
   if (state.mode === "springLaunch" || state.mode === "lockOnDash") return null;
   const nearest = closestLoop(course, input.position);
-  if (nearest.distance > tuning.loopEntryWindow || nearest.gap > tuning.loopGrab) return null;
+  const stand = add(nearest.point, scale(nearest.up, tuning.probeHalfHeight));
+  const gap = length(sub(input.position, stand));
+  if (nearest.distance > tuning.loopEntryWindow || gap > tuning.loopGrab) return null;
   const along = dot(velocity, nearest.tangent);
   if (along < tuning.loopEnterSpeed) return null;
   if (dot(normalize(state.facing), nearest.tangent) < tuning.loopEntryAlign) return null;
@@ -964,25 +974,29 @@ function tickLoopRide(
   }
   const next = sampleLoop(course, state.loopDistance);
   const curve = add(next.point, scale(next.up, tuning.probeHalfHeight));
-  const blend = state.loopBlend;
-  const pulled = lerpToward(input.position, curve, blend);
-  const gap = length(sub(pulled, input.position));
-  const stepLimit = state.loopSpeed * dt + 0.3;
-  const snap =
-    gap <= stepLimit || gap <= VECTOR_EPSILON
-      ? pulled
-      : lerpToward(input.position, pulled, stepLimit / gap);
-  state.up = slerpDir(state.up, next.up, blend < 1 ? Math.min(blend, 0.35) : 1);
+  const along = scale(next.tangent, Math.max(state.loopSpeed, 0) * dt);
+  const predicted = add(input.position, along);
+  const miss = sub(curve, predicted);
+  const close = 1 - Math.exp(-dt / Math.max(tuning.loopBlendTime, 0.02));
+  const snap = add(predicted, scale(miss, close));
+  const frameTurn = angleBetween(here.up, next.up);
+  state.up = turnUp(state.up, next.up, frameTurn + (3 * Math.PI) / 180);
   state.facing = alignFacing(next.tangent, state.up);
   return motion(scale(next.tangent, state.loopSpeed), snap, 0);
 }
 
-function lerpToward(from: Vec3, to: Vec3, t: number): Vec3 {
-  return {
-    x: from.x + (to.x - from.x) * t,
-    y: from.y + (to.y - from.y) * t,
-    z: from.z + (to.z - from.z) * t,
-  };
+function angleBetween(from: Vec3, to: Vec3): number {
+  const a = normalize(from);
+  const b = normalize(to);
+  if (length(a) <= VECTOR_EPSILON || length(b) <= VECTOR_EPSILON) return 0;
+  return Math.acos(clamp(dot(a, b), -1, 1));
+}
+
+/** Follow `to`, but never turn more than `maxRadians` in one step. */
+function turnUp(from: Vec3, to: Vec3, maxRadians: number): Vec3 {
+  const angle = angleBetween(from, to);
+  if (angle <= maxRadians || angle < 1e-5) return normalize(to);
+  return slerpDir(from, to, maxRadians / angle);
 }
 
 function leaveLoop(state: ControllerState, frame: LoopFrame | null, tuning: PlayerTuning): Motion {

@@ -70,8 +70,12 @@ export class SceneManager {
     const next = this.factory[id]();
     this.current = next;
     this.store.set({ sceneId: id, paused: false });
-    void Promise.resolve(next.enter()).catch((error: unknown) => {
+    try {
+      void Promise.resolve(next.enter()).catch((error: unknown) => {
+        this.onEnterError?.(error);
+      });
+    } catch (error) {
       this.onEnterError?.(error);
-    });
+    }
   }
 }

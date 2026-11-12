@@ -175,6 +175,7 @@ export function evaluateInput(
 
   const frame: InputFrame = {
     move,
+    padMove,
     camera: {
       x: clamp(keyCamera.x + padCamera.x, -1, 1),
       y: clamp(keyCamera.y + padCamera.y, -1, 1),
