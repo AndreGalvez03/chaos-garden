@@ -114,7 +114,10 @@ function standIsSafe(ride: Ride, at: Vector3): boolean {
   return spots.every(([x, z]) => {
     const from = new Vector3(at.x + x!, at.y, at.z + z!);
     const to = new Vector3(from.x, from.y - 2, from.z);
-    const hit = physics.raycast(from, to, { ignoreBody: ride.hero.aggregate.body });
+    const hit = physics.raycast(from, to, {
+      ignoreBody: ride.hero.aggregate.body,
+      shouldHitTriggers: true,
+    });
     if (!hit.hasHit) return false;
     const surface = readSurface(hit.body?.transformNode.metadata);
     return isSafeGroundSample(true, surface.kind, hit.hitNormalWorld.y);
@@ -213,6 +216,46 @@ describe("course ride", () => {
     expect(mouth).toBeGreaterThanOrEqual(29);
     expect(completed).toBe(true);
     expect(ride.spring).toBe(true);
+    ride.scene.dispose();
+  }, 30_000);
+
+  it("lands on the deck when forward is held through the exit spring", () => {
+    const ride = makeRide(new Vector3(0, 7.62, 190), new Vector3(0, 0, 34));
+    let launches = 0;
+    let landed = false;
+    for (let frame = 0; frame < 900; frame += 1) {
+      const before = ride.sim.mode;
+      stepRide(ride, 1);
+      if (ride.sim.mode === "springLaunch" && before !== "springLaunch") launches += 1;
+      if (
+        launches > 0 &&
+        ride.sim.mode === "run" &&
+        ride.hero.body.position.y > 6 &&
+        ride.hero.body.position.y < 9
+      ) {
+        landed = true;
+        break;
+      }
+    }
+    expect(launches).toBe(1);
+    expect(landed).toBe(true);
+    expect(ride.respawns).toBe(0);
+    expect(ride.hero.body.position.z).toBeLessThan(270);
+    ride.scene.dispose();
+  }, 30_000);
+
+  it("does not respawn onto a spring or relaunch after a fall", () => {
+    const ride = makeRide(new Vector3(8, 7.62, 206));
+    for (let frame = 0; frame < 8; frame += 1) stepRide(ride, 1);
+    ride.hero.body.position.y = -40;
+    stepRide(ride, 1);
+    expect(ride.respawns).toBe(1);
+    expect(
+      Math.hypot(ride.hero.body.position.x - 8, ride.hero.body.position.z - 206),
+    ).toBeGreaterThan(2);
+    for (let frame = 0; frame < 20; frame += 1) stepRide(ride, 1);
+    expect(ride.sim.mode).not.toBe("springLaunch");
+    expect(ride.respawns).toBe(1);
     ride.scene.dispose();
   }, 30_000);
 

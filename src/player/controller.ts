@@ -469,6 +469,8 @@ function tickJump(
   if (launched) return launched;
   const grabbed = tryRail(state, velocity, input, supported, tuning);
   if (grabbed) return grabbed;
+  const riding = tryLoopRide(state, velocity, input, tuning);
+  if (riding) return riding;
   const dashed = tryDash(state, input, wishDir, wishLen, supported, tuning);
   if (dashed) return dashed;
 
@@ -918,12 +920,27 @@ function tryLoopRide(
   const nearest = closestLoop(course, input.position);
   const stand = add(nearest.point, scale(nearest.up, tuning.probeHalfHeight));
   const gap = length(sub(input.position, stand));
-  if (nearest.distance > tuning.loopEntryWindow || gap > tuning.loopGrab) return null;
-  const along = dot(velocity, nearest.tangent);
+  const mouth = sampleLoop(course, 0);
+  const flatToMouth = Math.hypot(
+    input.position.x - mouth.point.x,
+    input.position.z - mouth.point.z,
+  );
+  const riseToMouth = input.position.y - mouth.point.y - tuning.probeHalfHeight;
+  const intoMouth =
+    flatToMouth <= tuning.loopGrab &&
+    riseToMouth >= -0.3 &&
+    riseToMouth <= 2.5 &&
+    dot(velocity, mouth.tangent) >= tuning.loopEnterSpeed &&
+    dot(normalize(state.facing), mouth.tangent) >= tuning.loopEntryAlign;
+  const entry = intoMouth ? mouth : nearest;
+  if (!intoMouth && (nearest.distance > tuning.loopEntryWindow || gap > tuning.loopGrab))
+    return null;
+  const along = dot(velocity, entry.tangent);
   if (along < tuning.loopEnterSpeed) return null;
-  if (dot(normalize(state.facing), nearest.tangent) < tuning.loopEntryAlign) return null;
+  if (!intoMouth && dot(normalize(state.facing), entry.tangent) < tuning.loopEntryAlign)
+    return null;
   state.mode = "loopRun";
-  state.loopDistance = nearest.distance;
+  state.loopDistance = entry.distance;
   state.loopSpeed = along;
   state.loopBlend = 0;
   return tickLoopRide(state, input, tuning, input.dt);
@@ -940,7 +957,7 @@ function tickLoopRide(
   const here = sampleLoop(course, state.loopDistance);
   const gravity: Vec3 = { x: 0, y: -tuning.gravity, z: 0 };
   state.loopSpeed += dot(gravity, here.tangent) * tuning.slopeInfluence * dt;
-  if (input.actions.jumpPressed) {
+  if (input.actions.jumpPressed && state.loopBlend > 0) {
     state.mode = "jump";
     state.jumpOwned = true;
     state.jumpTime = 0;

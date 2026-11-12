@@ -16,11 +16,16 @@ export interface PlayHudState {
   onCredits: () => void;
 }
 
-let failureShown = false;
+let startupFailed = false;
+let failureLogged = false;
+
+/** True after the startup error panel is showing. Scene changes stay blocked. */
+export function hasStartupFailure(): boolean {
+  return startupFailed;
+}
 
 export function showFailure(root: HTMLElement, error: unknown): void {
-  if (failureShown) return;
-  failureShown = true;
+  startupFailed = true;
   const message = error instanceof Error ? error.message : "The view failed to start.";
   root.replaceChildren();
   const panel = document.createElement("section");
@@ -38,7 +43,11 @@ export function showFailure(root: HTMLElement, error: unknown): void {
   });
   panel.append(heading, body, retry);
   root.append(panel);
-  console.error(error);
+  retry.focus?.();
+  if (!failureLogged) {
+    console.error(error);
+    failureLogged = true;
+  }
 }
 
 export class UiRoot implements MenuSurface {
@@ -65,6 +74,7 @@ export class UiRoot implements MenuSurface {
   }
 
   showLoading(): void {
+    if (hasStartupFailure()) return;
     this.mode = null;
     this.pauseOpen = false;
     this.root.replaceChildren();

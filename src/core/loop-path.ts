@@ -14,7 +14,7 @@ export interface LoopFrame {
 export const LOOP_RADIUS = 7;
 
 /** Landing deck length, and how far that deck starts before the exit point. */
-export const LOOP_EXIT_DECK_DEPTH = 32;
+export const LOOP_EXIT_DECK_DEPTH = 64;
 export const LOOP_EXIT_DECK_LEAD = 2;
 
 /** Deck centered on the exit line, long enough to catch the landing and the spring. */

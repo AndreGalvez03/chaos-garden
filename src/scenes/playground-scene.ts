@@ -573,7 +573,7 @@ export class PlaygroundScene {
     this.rayTo.set(x, y - 2, z);
     const hit = physics.raycast(this.rayFrom, this.rayTo, {
       ignoreBody: hero.aggregate.body,
-      shouldHitTriggers: false,
+      shouldHitTriggers: true,
     });
     if (!hit.hasHit) return { hit: false, kind: "ground", normalY: 0 };
     const surface = readSurface(hit.body?.transformNode.metadata);

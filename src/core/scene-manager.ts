@@ -18,6 +18,7 @@ export class SceneManager {
     private readonly store: GameStore,
     private readonly factory: Record<SceneId, () => SceneController>,
     private readonly onEnterError?: (error: unknown) => void,
+    private readonly canRequest: () => boolean = () => true,
   ) {}
 
   get currentId(): SceneId | null {
@@ -25,6 +26,7 @@ export class SceneManager {
   }
 
   request(id: SceneId): void {
+    if (!this.canRequest()) return;
     if (this.pending === id) return;
     if (this.pending === null && this.current?.id === id) return;
     this.pending = id;

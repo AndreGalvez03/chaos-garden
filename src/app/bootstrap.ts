@@ -14,7 +14,7 @@ import { cloneTuning } from "../player/tuning";
 import { CreditsScene } from "../scenes/credits-scene";
 import { PlaygroundScene } from "../scenes/playground-scene";
 import { TitleScene } from "../scenes/title-scene";
-import { showFailure, UiRoot } from "../ui/overlay";
+import { hasStartupFailure, showFailure, UiRoot } from "../ui/overlay";
 import { TuningOverlay } from "../ui/tuning-overlay";
 import type { AppContext } from "./context";
 
@@ -60,6 +60,7 @@ export async function startGame(canvas: HTMLCanvasElement, overlay: HTMLElement)
     (error) => {
       showFailure(overlay, error);
     },
+    () => !hasStartupFailure(),
   );
   app.requestScene = (id) => {
     scenes.request(id);

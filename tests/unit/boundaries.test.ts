@@ -1,4 +1,12 @@
-import { copyFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -40,16 +48,12 @@ function cruise(files: Record<string, string>): { status: number | null; output:
       writeFileSync(path.join(dir, relative), contents);
     }
     copyFileSync(path.join(root, "tsconfig.json"), path.join(dir, "tsconfig.json"));
-    copyFileSync(
-      path.join(root, "dependency-cruiser.config.mjs"),
+    const realConfig = readFileSync(path.join(root, "dependency-cruiser.config.mjs"), "utf8");
+    writeFileSync(
       path.join(dir, "dependency-cruiser.config.mjs"),
+      realConfig.replace("options: {", "options: {\n    preserveSymlinks: true,"),
     );
-    const linked = spawnSync("cp", [
-      "-al",
-      path.join(root, "node_modules"),
-      path.join(dir, "node_modules"),
-    ]);
-    expect(linked.status).toBe(0);
+    symlinkSync(path.join(root, "node_modules"), path.join(dir, "node_modules"));
     const bin = path.join(dir, "node_modules/dependency-cruiser/bin/dependency-cruiser.mjs");
     const result = spawnSync(
       process.execPath,
