@@ -17,6 +17,7 @@ export interface PlayerTuning {
   slopeInfluence: number;
   coyoteTime: number;
   groundedMaxRise: number;
+  walkableDot: number;
   turnResponse: number;
   jumpSpeed: number;
   jumpHoldWindow: number;
@@ -33,6 +34,7 @@ export interface PlayerTuning {
   dashSpeed: number;
   dashDuration: number;
   dashRange: number;
+  dashArrive: number;
   dashConeDot: number;
   dashFallbackLift: number;
   railGrabRadius: number;
@@ -52,6 +54,9 @@ export interface PlayerTuning {
   loopEnterSpeed: number;
   loopExitSpeed: number;
   loopUprightDot: number;
+  loopEntryWindow: number;
+  loopGrab: number;
+  loopEntryAlign: number;
   loopGlue: number;
   loopCoyote: number;
   loopAlign: number;
@@ -80,6 +85,9 @@ export interface PlayerTuning {
   cameraPosFollow: number;
   cameraCollisionPad: number;
   cameraCollisionMin: number;
+  cameraSphere: number;
+  cameraSnapIn: number;
+  cameraEaseOut: number;
   cameraAutoSpeed: number;
   cameraOffsetMax: number;
 }
@@ -179,6 +187,15 @@ const FIELDS: readonly TunableSpec[] = [
     max: 8,
     step: 0.1,
     value: 1.6,
+  },
+  {
+    key: "walkableDot",
+    label: "Walkable floor dot",
+    group: "Run",
+    min: 0.2,
+    max: 0.95,
+    step: 0.01,
+    value: 0.6,
   },
   {
     key: "turnResponse",
@@ -287,11 +304,20 @@ const FIELDS: readonly TunableSpec[] = [
     label: "Dash time",
     group: "Dash",
     min: 0.05,
-    max: 0.5,
+    max: 1.2,
     step: 0.01,
-    value: 0.18,
+    value: 0.55,
   },
   { key: "dashRange", label: "Dash range", group: "Dash", min: 2, max: 40, step: 0.5, value: 18 },
+  {
+    key: "dashArrive",
+    label: "Dash arrive",
+    group: "Dash",
+    min: 0.2,
+    max: 2,
+    step: 0.05,
+    value: 0.7,
+  },
   {
     key: "dashConeDot",
     label: "Dash cone dot",
@@ -427,7 +453,7 @@ const FIELDS: readonly TunableSpec[] = [
     min: 6,
     max: 40,
     step: 0.5,
-    value: 18,
+    value: 20,
   },
   {
     key: "loopExitSpeed",
@@ -446,6 +472,25 @@ const FIELDS: readonly TunableSpec[] = [
     max: 1,
     step: 0.01,
     value: 0.55,
+  },
+  {
+    key: "loopEntryWindow",
+    label: "Loop entry window",
+    group: "Loop",
+    min: 0.5,
+    max: 8,
+    step: 0.1,
+    value: 3.5,
+  },
+  { key: "loopGrab", label: "Loop grab", group: "Loop", min: 0.4, max: 3, step: 0.05, value: 1.6 },
+  {
+    key: "loopEntryAlign",
+    label: "Loop entry align",
+    group: "Loop",
+    min: 0,
+    max: 1,
+    step: 0.01,
+    value: 0.7,
   },
   { key: "loopGlue", label: "Loop glue", group: "Loop", min: 0, max: 20, step: 0.1, value: 6 },
   {
@@ -684,6 +729,33 @@ const FIELDS: readonly TunableSpec[] = [
     value: 1.15,
   },
   {
+    key: "cameraSphere",
+    label: "Camera sphere",
+    group: "Camera",
+    min: 0.05,
+    max: 1,
+    step: 0.01,
+    value: 0.28,
+  },
+  {
+    key: "cameraSnapIn",
+    label: "Camera snap in",
+    group: "Camera",
+    min: 1,
+    max: 40,
+    step: 0.5,
+    value: 22,
+  },
+  {
+    key: "cameraEaseOut",
+    label: "Camera ease out",
+    group: "Camera",
+    min: 0.2,
+    max: 12,
+    step: 0.1,
+    value: 3.2,
+  },
+  {
     key: "cameraAutoSpeed",
     label: "Auto yaw speed",
     group: "Camera",
@@ -760,5 +832,11 @@ export function validateTuning(tuning: PlayerTuning): string[] {
   if (tuning.cameraPitchMin > tuning.cameraPitchMax)
     errors.push("Camera pitch limits are reversed.");
   if (tuning.jumpCut > tuning.jumpSpeed) errors.push("Jump release cut must sit under jump speed.");
+  if (tuning.dashRange > tuning.dashSpeed * tuning.dashDuration) {
+    errors.push("Dash range must fit in one dash.");
+  }
+  if (tuning.railMinSpeed > tuning.railCruise || tuning.railCruise > tuning.railMaxSpeed) {
+    errors.push("Rail speeds must rise from grab to cruise to max.");
+  }
   return errors;
 }

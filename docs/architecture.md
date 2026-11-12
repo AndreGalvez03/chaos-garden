@@ -40,7 +40,7 @@ flowchart LR
   scenes --> overlay[HTML overlay]
 ```
 
-The yard scene is the only one that turns on physics. It builds the gray-box yard and the terrace course, drops the sprout hero in, and steps a pure controller once per fixed step. The controller takes named actions plus ground, rail, and beacon samples and returns a velocity, an optional rail snap, and a gravity scale. It does not import the scene graph. The follow camera is placed after that physics step: it widens and pulls back with speed, eases its up vector through the loop and the rail, and shortens itself when a ray hits a wall. `src/core` does not import scenes or the overlay. `src/app` is the only place that connects them.
+The yard scene is the only one that turns on physics. It builds the gray-box yard and the terrace course, drops the sprout hero in, and steps a pure controller once per fixed step. The controller takes named actions plus ground, rail, loop, and beacon samples and returns a velocity, an optional snap, and a gravity scale. The loop is a spline ride: the body follows the curve and ignores the ribbon while it is on it. It does not import the scene graph. The follow camera is drawn between the last two physics poses. It widens and pulls back with speed, eases through the loop and the rail, and shortens itself when a sphere cast hits a wall. `src/core` does not import the renderer, scenes, or the overlay. `src/app` is the only place that connects them.
 
 Tuning numbers live in `src/player/tuning.ts`. A hidden overlay edits a memory copy of that object. It is not part of the pause menu and it is not stored.
 

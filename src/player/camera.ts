@@ -5,6 +5,7 @@ import {
   dampAngle,
   dampVec,
   length,
+  lerpVec,
   scale,
   slerpDir,
   sub,
@@ -64,10 +65,11 @@ export function advanceCameraRig(
   look: CameraLook,
   playerPosition: Vec3,
   playerUp: Vec3,
-  planarVelocity: Vec3,
+  velocity: Vec3,
   facing: Vec3,
   dt: number,
   tuning: PlayerTuning,
+  headingFromFacing = false,
 ): CameraAim {
   const next = cloneRig(rig);
   const lookActive = Math.hypot(look.lookX, look.lookY) > 0.2;
@@ -90,11 +92,17 @@ export function advanceCameraRig(
     tuning.cameraPitchMax,
   );
 
-  const speed = length(planarVelocity);
-  const headingSource = speed >= tuning.cameraAutoSpeed ? planarVelocity : facing;
-  const heading = Math.atan2(headingSource.x, headingSource.z);
-  const safeHeading = length(headingSource) > VECTOR_EPSILON ? heading : next.yaw;
-  next.yaw = dampAngle(next.yaw, safeHeading + next.yawOffset, tuning.cameraFollow, dt);
+  const speed = length(velocity);
+  const headingSource = headingFromFacing || speed < tuning.cameraAutoSpeed ? facing : velocity;
+  const flat = { x: headingSource.x, y: 0, z: headingSource.z };
+  if (length(flat) > 0.35) {
+    next.yaw = dampAngle(
+      next.yaw,
+      Math.atan2(flat.x, flat.z) + next.yawOffset,
+      tuning.cameraFollow,
+      dt,
+    );
+  }
 
   const pace = clamp(speed / Math.max(tuning.cameraDistanceSpeed, 0.001), 0, 1);
   const fovPace = clamp(speed / Math.max(tuning.cameraFovSpeed, 0.001), 0, 1);
@@ -124,7 +132,35 @@ export function advanceCameraRig(
   return { rig: next, lookAt: next.lookAt, desired: add(next.lookAt, offset) };
 }
 
-/** Pulls the camera in when a ray from the look point hits a wall. */
+/** Midpoint blend used while drawing between two fixed steps. */
+export function blendCameraRig(
+  previous: CameraRig,
+  current: CameraRig,
+  alpha: number,
+): { position: Vec3; lookAt: Vec3; up: Vec3; fov: number } {
+  const t = clamp(alpha, 0, 1);
+  return {
+    position: lerpVec(previous.position, current.position, t),
+    lookAt: lerpVec(previous.lookAt, current.lookAt, t),
+    up: slerpDir(previous.up, current.up, t),
+    fov: previous.fov + (current.fov - previous.fov) * t,
+  };
+}
+
+/**
+ * A closer wall snaps in. Opening back up eases out, so the view does not pop.
+ */
+export function smoothCameraClearance(
+  current: number,
+  allowed: number,
+  dt: number,
+  tuning: PlayerTuning,
+): number {
+  const lambda = allowed + 0.02 < current ? tuning.cameraSnapIn : tuning.cameraEaseOut;
+  return Math.max(tuning.cameraCollisionMin, damp(current, allowed, lambda, dt));
+}
+
+/** Pulls the camera in when a cast from the look point hits a wall. */
 export function resolveCameraPosition(
   lookAt: Vec3,
   desired: Vec3,

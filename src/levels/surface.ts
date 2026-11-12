@@ -1,5 +1,8 @@
 export type SurfaceKind = "ground" | "loop" | "spring";
 
+/** Membership bit for the loop ribbon. The runner clears it while riding. */
+export const LOOP_COLLISION_BIT = 2;
+
 export interface SurfaceMeta {
   kind: SurfaceKind;
   springDirection?: { x: number; y: number; z: number };

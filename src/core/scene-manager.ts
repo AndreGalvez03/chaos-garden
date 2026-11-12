@@ -3,7 +3,7 @@ import type { GameStore, SceneId } from "./game-state";
 
 export interface SceneController {
   readonly id: SceneId;
-  enter(): void;
+  enter(): void | Promise<void>;
   exit(): void;
   beginFrame(input: InputFrame): void;
   fixedUpdate(step: number, input: InputFrame): void;
@@ -67,8 +67,8 @@ export class SceneManager {
   private activate(id: SceneId): void {
     this.current?.exit();
     const next = this.factory[id]();
-    next.enter();
     this.current = next;
     this.store.set({ sceneId: id, paused: false });
+    void next.enter();
   }
 }

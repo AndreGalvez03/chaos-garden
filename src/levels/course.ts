@@ -9,13 +9,15 @@ import { CreatePolyhedron } from "@babylonjs/core/Meshes/Builders/polyhedronBuil
 import { PhysicsAggregate } from "@babylonjs/core/Physics/v2/physicsAggregate";
 import { PhysicsShapeType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
 import type { Scene } from "@babylonjs/core/scene";
+import { buildLoopPath, type LoopCourse } from "../core/loop-path";
 import type { Vec3 } from "../core/math";
 import { buildSpline, type Spline } from "../core/spline";
-import type { SurfaceMeta } from "./surface";
+import { LOOP_COLLISION_BIT, type SurfaceMeta } from "./surface";
 
 export interface CourseContent {
   rails: Spline[];
   targets: Vec3[];
+  loop: LoopCourse;
 }
 
 const RAIL_CONTROLS: readonly Vec3[] = [
@@ -45,26 +47,21 @@ export function buildCourse(scene: Scene): CourseContent {
   ledge(scene, tones.stone);
   slope(scene, tones.slope);
   approach(scene, tones.path);
-  const loopExit = liftedLoop(scene, tones.loop);
-  exitDeck(scene, tones.path, loopExit);
+  const loop = liftedLoop(scene, tones.loop);
+  const exit = loop.spline.points[loop.spline.points.length - 1] ?? { x: 8, y: 7, z: 200 };
+  exitDeck(scene, tones.path, exit);
   gateway(scene, tones.stone);
   sideWall(scene, tones.stone);
 
   const springDirection = normalize({ x: 0.28, y: 1, z: 0.42 });
   spring(scene, "spring-yard", [-12, 0.35, -2], springDirection, tones.spring);
-  spring(
-    scene,
-    "spring-exit",
-    [loopExit.x, loopExit.y, loopExit.z + 8],
-    { x: 0.05, y: 0.86, z: 0.5 },
-    tones.spring,
-  );
+  spring(scene, "spring-exit", [exit.x, exit.y, exit.z + 6], { x: 0, y: 1, z: 0.35 }, tones.spring);
 
   const targets: Vec3[] = [
     { x: -5, y: 8.2, z: 8 },
-    { x: loopExit.x - 1, y: loopExit.y + 7, z: loopExit.z + 18 },
-    { x: loopExit.x + 3, y: loopExit.y + 9, z: loopExit.z + 32 },
-    { x: loopExit.x - 2, y: loopExit.y + 6.5, z: loopExit.z + 46 },
+    { x: exit.x, y: exit.y + 6, z: exit.z + 14 },
+    { x: exit.x + 2, y: exit.y + 8, z: exit.z + 26 },
+    { x: exit.x - 1, y: exit.y + 5, z: exit.z + 38 },
   ];
   for (const [index, target] of targets.entries()) {
     const marker = CreatePolyhedron(`beacon-${index + 1}`, { type: 1, size: 0.55 }, scene);
@@ -73,7 +70,7 @@ export function buildCourse(scene: Scene): CourseContent {
   }
 
   railMesh(scene, tones.rail);
-  return { rails: [buildSpline(RAIL_CONTROLS, 8)], targets };
+  return { rails: [buildSpline(RAIL_CONTROLS, 8)], targets, loop };
 }
 
 function ledge(scene: Scene, material: StandardMaterial): void {
@@ -107,53 +104,68 @@ function slope(scene: Scene, material: StandardMaterial): void {
 }
 
 function approach(scene: Scene, material: StandardMaterial): void {
-  // Ends at the loop mouth. The crest of the slope lands on this deck.
-  box(scene, "loop-approach", [8, 0.7, 36], [0, 6.15, 186], material, { kind: "ground" });
+  box(scene, "loop-approach", [8, 0.7, 36], [0, 6.65, 186], material, { kind: "ground" });
 }
 
-function liftedLoop(scene: Scene, material: StandardMaterial): Vec3 {
-  const steps = 18;
-  const radius = 7;
-  const baseY = 6.5;
-  const mouthZ = 204;
-  const sweep = Math.PI * 0.92;
+function liftedLoop(scene: Scene, material: StandardMaterial): LoopCourse {
+  const loop = buildLoopPath({
+    mouth: { x: 0, y: 7, z: 200 },
+    forward: { x: 0, y: 0, z: 1 },
+    up: { x: 0, y: 1, z: 0 },
+    radius: 7,
+    lateralShift: 8,
+    samples: 64,
+  });
   const left: Vector3[] = [];
   const right: Vector3[] = [];
-  for (let index = 0; index <= steps; index += 1) {
-    const phi = (index / steps) * sweep;
-    const point = loopPoint(phi, radius, baseY + radius, mouthZ);
-    left.push(point.add(new Vector3(-3, 0, 0)));
-    right.push(point.add(new Vector3(3, 0, 0)));
+  const points = loop.spline.points;
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index]!;
+    const next = points[Math.min(index + 1, points.length - 1)]!;
+    const up = loop.ups[index] ?? { x: 0, y: 1, z: 0 };
+    const tangent = {
+      x: next.x - point.x,
+      y: next.y - point.y,
+      z: next.z - point.z,
+    };
+    const side = normalizeVec(crossVec(tangent, up));
+    left.push(new Vector3(point.x - side.x * 3, point.y - side.y * 3, point.z - side.z * 3));
+    right.push(new Vector3(point.x + side.x * 3, point.y + side.y * 3, point.z + side.z * 3));
   }
   const ribbon = CreateRibbon(
     "loop-ribbon",
-    { pathArray: [right, left], sideOrientation: Mesh.DOUBLESIDE },
+    { pathArray: [left, right], sideOrientation: Mesh.DOUBLESIDE },
     scene,
   );
   ribbon.material = material;
-  ribbon.isPickable = false;
+  ribbon.metadata = { kind: "loop" } satisfies SurfaceMeta;
+  ribbon.computeWorldMatrix(true);
+  const aggregate = new PhysicsAggregate(
+    ribbon,
+    PhysicsShapeType.MESH,
+    { mass: 0, friction: 0.9, restitution: 0 },
+    scene,
+  );
+  aggregate.shape.filterMembershipMask = LOOP_COLLISION_BIT;
+  aggregate.shape.filterCollideMask = 0xffffffff;
+  return loop;
+}
 
-  const angle = 0.9;
-  const length = 8;
-  const thickness = 0.4;
-  const rise = Math.sin(angle) * length;
-  const run = Math.cos(angle) * length;
-  const ramp = CreateBox("loop-ramp", { width: 6, height: thickness, depth: length }, scene);
-  const normal = new Vector3(0, Math.cos(angle), -Math.sin(angle));
-  ramp.position
-    .set(0, baseY + rise / 2, mouthZ + run / 2)
-    .subtractInPlace(normal.scale(thickness / 2));
-  ramp.rotation.x = -angle;
-  ramp.material = material;
-  ramp.metadata = { kind: "loop" } satisfies SurfaceMeta;
-  ramp.computeWorldMatrix(true);
-  new PhysicsAggregate(ramp, PhysicsShapeType.BOX, { mass: 0, friction: 1, restitution: 0 }, scene);
+function crossVec(a: Vec3, b: Vec3): Vec3 {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  };
+}
 
-  return { x: 0, y: baseY + rise, z: mouthZ + run + 6 };
+function normalizeVec(value: Vec3): Vec3 {
+  const size = Math.hypot(value.x, value.y, value.z) || 1;
+  return { x: value.x / size, y: value.y / size, z: value.z / size };
 }
 
 function exitDeck(scene: Scene, material: StandardMaterial, exit: Vec3): void {
-  box(scene, "loop-exit", [8, 0.7, 28], [exit.x, exit.y - 0.35, exit.z + 10], material, {
+  box(scene, "loop-exit", [6, 0.7, 16], [exit.x, exit.y - 0.35, exit.z], material, {
     kind: "ground",
   });
 }
@@ -198,10 +210,6 @@ function railMesh(scene: Scene, material: StandardMaterial): void {
     rung.position.set(point.x, point.y, point.z);
     rung.material = material;
   }
-}
-
-function loopPoint(phi: number, radius: number, centerY: number, centerZ: number): Vector3 {
-  return new Vector3(0, centerY - radius * Math.cos(phi), centerZ + radius * Math.sin(phi));
 }
 
 function box(

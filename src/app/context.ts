@@ -11,7 +11,7 @@ export type HavokRuntime = Awaited<ReturnType<typeof HavokPhysics>>;
 
 export interface AppContext {
   engine: Engine;
-  havok: HavokRuntime;
+  havok: Promise<HavokRuntime>;
   store: GameStore;
   input: InputManager;
   audio: AudioBus;

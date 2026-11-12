@@ -23,7 +23,7 @@ export async function startGame(canvas: HTMLCanvasElement, overlay: HTMLElement)
     adaptToDeviceRatio: true,
     powerPreference: "high-performance",
   });
-  const havok = await HavokPhysics({
+  const havok = HavokPhysics({
     locateFile: (file: string) => (file.endsWith(".wasm") ? havokWasmUrl : file),
   });
 

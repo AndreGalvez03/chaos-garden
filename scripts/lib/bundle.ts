@@ -2,7 +2,7 @@ import { gzipSync } from "node:zlib";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-/** Gzip size of every emitted JavaScript file, combined. The current build is about 384 KB. */
+/** Gzip size of every emitted JavaScript file, combined. The current build is about 401 KB. */
 export const MAX_JS_GZIP_BYTES = 550_000;
 /** Raw WebAssembly. The current physics file is about 2.1 MB. */
 export const MAX_WASM_BYTES = 2_600_000;

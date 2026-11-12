@@ -28,10 +28,10 @@ test("title screen enters the yard without console errors", async ({ page }) => 
   expect(Number.isFinite(startZ)).toBe(true);
 
   await page.keyboard.down("KeyW");
-  await page.waitForTimeout(2500);
-  const endZ = Number(await canvas.getAttribute("data-runner-z"));
+  await expect
+    .poll(async () => Number(await canvas.getAttribute("data-runner-z")), { timeout: 5000 })
+    .toBeGreaterThan(startZ + 3);
   await page.keyboard.up("KeyW");
-  expect(endZ).toBeGreaterThan(startZ + 3);
 
   await expect(page.locator("#tuning")).toBeHidden();
   await page.keyboard.press("Backquote");

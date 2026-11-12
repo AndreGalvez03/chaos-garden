@@ -8,6 +8,8 @@ export class TuningOverlay {
   private readonly readout: HTMLElement;
   private readonly valueLabels = new Map<keyof PlayerTuning, HTMLElement>();
   private visible = false;
+  private focus = 0;
+  private steered = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -71,7 +73,37 @@ export class TuningOverlay {
   }
 
   setReadout(mode: string, speed: number, grounded: boolean): void {
-    this.readout.textContent = `${mode}  ·  ${speed.toFixed(1)} m/s  ·  ${grounded ? "Grounded" : "Airborne"}`;
+    if (!this.visible) return;
+    const text = `${mode}  ·  ${speed.toFixed(1)} m/s  ·  ${grounded ? "Grounded" : "Airborne"}`;
+    if (this.readout.textContent !== text) this.readout.textContent = text;
+  }
+
+  /** D-pad or left stick: up and down move between sliders, left and right step the value. */
+  steer(x: number, y: number): void {
+    if (Math.hypot(x, y) < 0.55) {
+      this.steered = false;
+      return;
+    }
+    if (this.steered) return;
+    this.steered = true;
+    const sliders = [...this.root.querySelectorAll("input[type=range]")].filter(
+      (node): node is HTMLInputElement => node instanceof HTMLInputElement,
+    );
+    if (sliders.length === 0) return;
+    if (Math.abs(y) >= Math.abs(x)) {
+      this.focus = (this.focus + (y > 0 ? -1 : 1) + sliders.length) % sliders.length;
+      sliders[this.focus]?.focus();
+      return;
+    }
+    const slider = sliders[this.focus] ?? sliders[0];
+    if (!slider) return;
+    const step = Number(slider.step) || 0.1;
+    const min = Number(slider.min);
+    const max = Number(slider.max);
+    const next = Math.min(max, Math.max(min, Number(slider.value) + Math.sign(x) * step));
+    slider.value = String(next);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    slider.focus();
   }
 
   private apply(next: PlayerTuning): void {

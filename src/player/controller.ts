@@ -14,6 +14,7 @@ import {
   type Vec3,
   VECTOR_EPSILON,
 } from "../core/math";
+import { closestLoop, sampleLoop, type LoopCourse, type LoopFrame } from "../core/loop-path";
 import type { SplineSample } from "../core/spline";
 import type { PlayerTuning } from "./tuning";
 
@@ -61,15 +62,22 @@ export interface ControllerState {
   dashTime: number;
   dashSpent: boolean;
   dashDir: Vec3;
+  dashTarget: Vec3 | null;
+  dashEntrySpeed: number;
+  jumpOwned: boolean;
   jumpTime: number;
   coyote: number;
   springTime: number;
+  springCoast: boolean;
   railSpeed: number;
   railSign: 1 | -1;
   railTime: number;
   railCooldown: number;
   balance: number;
   loopCoyote: number;
+  loopDistance: number;
+  loopSpeed: number;
+  loopCooldown: number;
   facing: Vec3;
   up: Vec3;
 }
@@ -81,6 +89,7 @@ export interface ControllerInput {
   actions: PlayerActions;
   ground: GroundQuery;
   rail: SplineSample | null;
+  loopCourse: LoopCourse | null;
   targets: readonly Vec3[];
   dt: number;
   tuning: PlayerTuning;
@@ -92,6 +101,8 @@ export interface ControllerOutput {
   snap: Vec3 | null;
   gravityFactor: number;
   supported: boolean;
+  /** While riding the loop spline, the body should not collide with the ribbon. */
+  ignoreLoopCollision: boolean;
   up: Vec3;
   facing: Vec3;
 }
@@ -112,7 +123,7 @@ const MODE_LABELS: Record<PlayerMode, string> = {
   lockOnDash: "Lock-on dash",
   railGrind: "Rail grind",
   springLaunch: "Spring",
-  loopRun: "Surface run",
+  loopRun: "Loop",
 };
 
 export function modeLabel(mode: PlayerMode): string {
@@ -127,15 +138,22 @@ export function createControllerState(): ControllerState {
     dashTime: 0,
     dashSpent: false,
     dashDir: { ...VEC3_FORWARD },
+    dashTarget: null,
+    dashEntrySpeed: 0,
+    jumpOwned: false,
     jumpTime: 0,
     coyote: 0,
     springTime: 0,
+    springCoast: false,
     railSpeed: 0,
     railSign: 1,
     railTime: 0,
     railCooldown: 0,
     balance: 0,
     loopCoyote: 0,
+    loopDistance: -1,
+    loopSpeed: 0,
+    loopCooldown: 0,
     facing: { ...VEC3_FORWARD },
     up: { ...VEC3_UP },
   };
@@ -171,11 +189,14 @@ export function stepController(input: ControllerInput): ControllerOutput {
   const wishDir = wishLen > VECTOR_EPSILON ? normalize(input.actions.wish) : state.facing;
   const velocity = { ...input.velocity };
   const normal = input.ground.hit ? normalize(input.ground.normal) : state.up;
-  const supported = input.ground.hit && dot(velocity, normal) <= tuning.groundedMaxRise;
+  const walkable =
+    !input.ground.hit || input.ground.surface === "loop" || normal.y >= tuning.walkableDot;
+  const supported = input.ground.hit && walkable && dot(velocity, normal) <= tuning.groundedMaxRise;
 
   if (supported) state.coyote = tuning.coyoteTime;
   else state.coyote = Math.max(0, state.coyote - dt);
   state.railCooldown = Math.max(0, state.railCooldown - dt);
+  state.loopCooldown = Math.max(0, state.loopCooldown - dt);
 
   state.facing = trackFacing(state.facing, state.up, velocity, wishDir, wishLen, tuning, dt);
   if (supported && state.mode !== "loopRun") {
@@ -190,6 +211,7 @@ export function stepController(input: ControllerInput): ControllerOutput {
     snap: motion.snap,
     gravityFactor: motion.gravityFactor,
     supported,
+    ignoreLoopCollision: state.mode === "loopRun" && state.loopDistance >= 0,
     up: state.up,
     facing: state.facing,
   };
@@ -208,7 +230,8 @@ export function pickDashTarget(
   for (const target of targets) {
     const offset = sub(target, position);
     const distance = length(offset);
-    if (distance < 0.4 || distance > tuning.dashRange || distance >= bestDistance) continue;
+    if (distance < tuning.dashArrive || distance > tuning.dashRange || distance >= bestDistance)
+      continue;
     if (dot(scale(offset, 1 / distance), forward) < tuning.dashConeDot) continue;
     best = target;
     bestDistance = distance;
@@ -228,7 +251,7 @@ function dispatch(
   dt: number,
 ): Motion {
   if (state.mode === "springLaunch") return tickSpring(state, velocity, tuning, dt);
-  if (state.mode === "lockOnDash") return tickDash(state, velocity, supported, tuning, dt);
+  if (state.mode === "lockOnDash") return tickDash(state, input, tuning, dt);
   if (state.mode === "rollCharge") {
     return tickCharge(state, velocity, input, wishDir, wishLen, normal, supported, tuning, dt);
   }
@@ -260,6 +283,8 @@ function tickFree(
   if (launched) return launched;
   const grabbed = tryRail(state, velocity, input, supported, tuning);
   if (grabbed) return grabbed;
+  const riding = tryLoopRide(state, velocity, input, tuning);
+  if (riding) return riding;
   const glued = tryLoop(state, velocity, input, wishDir, wishLen, normal, supported, tuning, dt);
   if (glued) return glued;
   if (shouldSlipOffLoop(input, velocity, normal, supported, tuning)) {
@@ -291,7 +316,9 @@ function tickSpring(
 ): Motion {
   state.springTime -= dt;
   if (state.springTime <= 0) {
-    state.mode = dot(velocity, state.up) > 0 ? "jump" : "fall";
+    state.mode = "fall";
+    state.springCoast = true;
+    state.jumpOwned = false;
     state.jumpTime = tuning.minAirTime;
   }
   return motion(velocity, null, 1);
@@ -299,15 +326,24 @@ function tickSpring(
 
 function tickDash(
   state: ControllerState,
-  _velocity: Vec3,
-  supported: boolean,
+  input: ControllerInput,
   tuning: PlayerTuning,
   dt: number,
 ): Motion {
   state.dashTime -= dt;
-  const dashed = scale(state.dashDir, tuning.dashSpeed);
-  if (state.dashTime <= 0) landOrFall(state, dashed, supported, tuning);
-  return motion(dashed, null, 0);
+  const cap = Math.max(state.dashEntrySpeed, tuning.topSpeed);
+  if (state.dashTarget) {
+    const offset = sub(state.dashTarget, input.position);
+    const dist = length(offset);
+    if (dist <= tuning.dashArrive || state.dashTime <= 0)
+      return finishDash(state, offset, cap, tuning);
+    const direction = scale(offset, 1 / dist);
+    state.dashDir = direction;
+    state.facing = alignFacing(direction, state.up);
+    return motion(scale(direction, Math.min(tuning.dashSpeed, dist / Math.max(dt, 1e-6))), null, 0);
+  }
+  if (state.dashTime <= 0) return finishDash(state, state.dashDir, cap, tuning);
+  return motion(scale(state.dashDir, tuning.dashSpeed), null, 0);
 }
 
 function tickCharge(
@@ -331,10 +367,12 @@ function tickCharge(
     state.rollCharge = 0;
     return jumped;
   }
-  if (!input.actions.rollHeld) return beginBurst(state, wishDir, wishLen, tuning);
-  state.rollCharge = Math.min(1, state.rollCharge + dt / tuning.rollChargeTime);
-  const kept = Math.max(0, 1 - tuning.rollFriction * dt);
+  if (!input.actions.rollHeld) {
+    return beginBurst(state, wishDir, wishLen, tuning, length(projectOnPlane(velocity, normal)));
+  }
+  const kept = Math.max(0, 1 - tuning.rollFriction * state.rollCharge * dt);
   const planar = scale(projectOnPlane(velocity, normal), kept);
+  state.rollCharge = Math.min(1, state.rollCharge + dt / tuning.rollChargeTime);
   return motion(stick(planar, normal, tuning), null, 0);
 }
 
@@ -343,10 +381,12 @@ function beginBurst(
   wishDir: Vec3,
   wishLen: number,
   tuning: PlayerTuning,
+  currentSpeed: number,
 ): Motion {
   const direction = wishLen > 0.15 ? wishDir : state.facing;
-  const speed =
+  const charged =
     tuning.rollBurstMin + (tuning.rollBurstMax - tuning.rollBurstMin) * state.rollCharge;
+  const speed = Math.max(currentSpeed, charged);
   state.mode = "rollBurst";
   state.burstTime = tuning.rollBurstTime;
   state.rollCharge = 0;
@@ -369,6 +409,14 @@ function tickBurst(
   if (launched) return launched;
   const grabbed = tryRail(state, velocity, input, supported, tuning);
   if (grabbed) return grabbed;
+  const riding = tryLoopRide(state, velocity, input, tuning);
+  if (riding) return riding;
+  const glued = tryLoop(state, velocity, input, wishDir, wishLen, normal, supported, tuning, dt);
+  if (glued) return glued;
+  const jumped = tryJump(state, velocity, input, normal, supported, tuning);
+  if (jumped) return jumped;
+  const dashed = tryDash(state, input, wishDir, wishLen, supported, tuning);
+  if (dashed) return dashed;
 
   state.burstTime -= dt;
   let planar = projectOnPlane(velocity, supported ? normal : VEC3_UP);
@@ -416,9 +464,13 @@ function tickJump(
   const upSpeed = dot(steered, state.up);
   let gravityFactor = tuning.fallGravityScale;
   let next = steered;
-  const holding = input.actions.jumpHeld && state.jumpTime < tuning.jumpHoldWindow && upSpeed > 0;
+  const holding =
+    state.jumpOwned &&
+    input.actions.jumpHeld &&
+    state.jumpTime < tuning.jumpHoldWindow &&
+    upSpeed > 0;
   if (holding) gravityFactor = tuning.jumpGravityScale;
-  else if (!input.actions.jumpHeld && upSpeed > tuning.jumpCut) {
+  else if (state.jumpOwned && !input.actions.jumpHeld && upSpeed > tuning.jumpCut) {
     next = add(steered, scale(state.up, tuning.jumpCut - upSpeed));
   }
   if (dot(next, state.up) <= 0 && state.jumpTime > tuning.minAirTime) state.mode = "fall";
@@ -446,6 +498,7 @@ function tickRail(
   const travel = railTangent(rail, state.railSign);
   if (input.actions.jumpPressed) {
     state.mode = "jump";
+    state.jumpOwned = true;
     state.jumpTime = 0;
     state.railTime = 0;
     state.railCooldown = tuning.railRegrab;
@@ -486,9 +539,15 @@ function tickLoop(
   tuning: PlayerTuning,
   dt: number,
 ): Motion {
+  if (state.loopDistance >= 0) return tickLoopRide(state, input, tuning, dt);
+  if (supported && input.ground.surface !== "loop" && normal.y >= tuning.walkableDot) {
+    state.loopDistance = -1;
+    return tickGround(state, velocity, wishDir, wishLen, normal, tuning, dt);
+  }
   const surfaceNormal = supported ? normal : state.up;
   if (input.actions.jumpPressed) {
     state.mode = "jump";
+    state.jumpOwned = true;
     state.jumpTime = 0;
     state.up = surfaceNormal;
     state.facing = alignFacing(state.facing, surfaceNormal);
@@ -551,9 +610,9 @@ function tickGround(
     state.mode = "run";
     state.facing = alignFacing(steer, state.up);
   } else {
-    const brakeDir = length(planar) > VECTOR_EPSILON ? normalize(planar) : state.facing;
-    planar = accelerate(planar, brakeDir, 0, tuning.brakeAccel, dt);
+    planar = decelerate(planar, tuning.brakeAccel, dt);
     state.mode = length(planar) <= tuning.idleSpeed ? "idle" : "run";
+    state.jumpOwned = false;
   }
   return motion(stick(capSpeed(planar, tuning.overspeedCap), normal, tuning), null, 0);
 }
@@ -567,11 +626,9 @@ function tickAir(
   dt: number,
 ): Motion {
   state.mode = "fall";
-  return motion(
-    steerAir(velocity, wishDir, wishLen, state, tuning, dt),
-    null,
-    tuning.fallGravityScale,
-  );
+  const steered = steerAir(velocity, wishDir, wishLen, state, tuning, dt);
+  if (state.springCoast && steered.y <= 0) state.springCoast = false;
+  return motion(steered, null, state.springCoast ? 1 : tuning.fallGravityScale);
 }
 
 function shouldSlipOffLoop(
@@ -681,6 +738,8 @@ function tryDash(
   state.dashSpent = true;
   state.dashTime = tuning.dashDuration;
   state.dashDir = direction;
+  state.dashTarget = target ? { ...target } : null;
+  state.dashEntrySpeed = Math.hypot(input.velocity.x, input.velocity.z);
   state.facing = alignFacing(projectOnPlane(direction, state.up), state.up);
   return motion(scale(direction, tuning.dashSpeed), null, 0);
 }
@@ -698,6 +757,7 @@ function tryJump(
     return null;
   const up = supported ? normal : state.up;
   state.mode = "jump";
+  state.jumpOwned = true;
   state.jumpTime = 0;
   state.coyote = 0;
   state.dashSpent = false;
@@ -822,7 +882,116 @@ function cloneState(state: ControllerState): ControllerState {
   return {
     ...state,
     dashDir: { ...state.dashDir },
+    dashTarget: state.dashTarget ? { ...state.dashTarget } : null,
     facing: { ...state.facing },
     up: { ...state.up },
   };
+}
+
+function tryLoopRide(
+  state: ControllerState,
+  velocity: Vec3,
+  input: ControllerInput,
+  tuning: PlayerTuning,
+): Motion | null {
+  const course = input.loopCourse;
+  if (!course || state.loopCooldown > 0) return null;
+  if (state.mode === "springLaunch" || state.mode === "lockOnDash") return null;
+  const nearest = closestLoop(course, input.position);
+  if (nearest.distance > tuning.loopEntryWindow || nearest.gap > tuning.loopGrab) return null;
+  const along = dot(velocity, nearest.tangent);
+  if (along < tuning.loopEnterSpeed) return null;
+  if (dot(normalize(state.facing), nearest.tangent) < tuning.loopEntryAlign) return null;
+  state.mode = "loopRun";
+  state.loopDistance = nearest.distance;
+  state.loopSpeed = along;
+  return tickLoopRide(state, input, tuning, input.dt);
+}
+
+function tickLoopRide(
+  state: ControllerState,
+  input: ControllerInput,
+  tuning: PlayerTuning,
+  dt: number,
+): Motion {
+  const course = input.loopCourse;
+  if (!course) return leaveLoop(state, null, tuning);
+  const here = sampleLoop(course, state.loopDistance);
+  const gravity: Vec3 = { x: 0, y: -tuning.gravity, z: 0 };
+  state.loopSpeed += dot(gravity, here.tangent) * tuning.slopeInfluence * dt;
+  if (input.actions.jumpPressed) {
+    state.mode = "jump";
+    state.jumpOwned = true;
+    state.jumpTime = 0;
+    state.loopDistance = -1;
+    state.loopCooldown = tuning.railRegrab;
+    state.up = here.up;
+    state.facing = alignFacing(here.tangent, here.up);
+    return motion(
+      add(scale(here.tangent, Math.max(state.loopSpeed, 0)), scale(here.up, tuning.jumpSpeed)),
+      null,
+      tuning.jumpGravityScale,
+    );
+  }
+  if (state.loopSpeed < tuning.loopExitSpeed) return leaveLoop(state, here, tuning);
+  state.loopDistance += state.loopSpeed * dt;
+  if (state.loopDistance >= course.spline.length) {
+    const end = sampleLoop(course, course.spline.length);
+    state.mode = "run";
+    state.loopDistance = -1;
+    state.loopSpeed = Math.max(state.loopSpeed, 0);
+    state.loopCooldown = tuning.railRegrab;
+    state.up = { ...VEC3_UP };
+    state.facing = alignFacing(end.tangent, VEC3_UP);
+    state.dashSpent = false;
+    return motion(
+      scale(end.tangent, state.loopSpeed),
+      add(end.point, scale(VEC3_UP, tuning.probeHalfHeight)),
+      1,
+    );
+  }
+  const next = sampleLoop(course, state.loopDistance);
+  state.up = next.up;
+  state.facing = alignFacing(next.tangent, next.up);
+  return motion(
+    scale(next.tangent, state.loopSpeed),
+    add(next.point, scale(next.up, tuning.probeHalfHeight)),
+    0,
+  );
+}
+
+function leaveLoop(state: ControllerState, frame: LoopFrame | null, tuning: PlayerTuning): Motion {
+  const tangent = frame ? frame.tangent : state.facing;
+  state.mode = "fall";
+  state.jumpTime = tuning.minAirTime;
+  state.loopDistance = -1;
+  state.loopCooldown = tuning.railRegrab;
+  state.springCoast = false;
+  return motion(scale(tangent, Math.max(state.loopSpeed, 0)), null, tuning.fallGravityScale);
+}
+
+function finishDash(
+  state: ControllerState,
+  direction: Vec3,
+  cap: number,
+  tuning: PlayerTuning,
+): Motion {
+  const dir = length(direction) > VECTOR_EPSILON ? normalize(direction) : state.dashDir;
+  state.mode = "fall";
+  state.jumpTime = tuning.minAirTime;
+  state.dashTarget = null;
+  const aimed = scale(dir, Math.min(tuning.dashSpeed, cap));
+  const horizontal = Math.hypot(aimed.x, aimed.z);
+  const limited =
+    horizontal > cap
+      ? { x: (aimed.x * cap) / horizontal, y: aimed.y, z: (aimed.z * cap) / horizontal }
+      : aimed;
+  return motion(limited, null, tuning.fallGravityScale);
+}
+
+function decelerate(velocity: Vec3, decel: number, dt: number): Vec3 {
+  const speed = length(velocity);
+  if (speed <= VECTOR_EPSILON) return { x: 0, y: 0, z: 0 };
+  const next = Math.max(0, speed - decel * dt);
+  return scale(velocity, next / speed);
 }

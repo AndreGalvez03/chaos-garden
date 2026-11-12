@@ -44,7 +44,7 @@ export function createPlaceholderHero(scene: Scene, at: Vector3): PlaceholderHer
   const aggregate = new PhysicsAggregate(
     body,
     PhysicsShapeType.CAPSULE,
-    { mass: 1, friction: 0.15, restitution: 0 },
+    { mass: 1, friction: 0, restitution: 0 },
     scene,
   );
   aggregate.body.setLinearDamping(0);
