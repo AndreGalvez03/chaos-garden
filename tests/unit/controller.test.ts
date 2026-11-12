@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { add, scale, type Vec3 } from "../../src/core/math";
-import { buildLoopPath, type LoopCourse } from "../../src/core/loop-path";
+import { add, length, scale, sub, type Vec3 } from "../../src/core/math";
+import {
+  buildLoopPath,
+  closestLoop,
+  LOOP_EXIT_DECK_DEPTH,
+  loopExitDeck,
+  sampleLoop,
+  type LoopCourse,
+} from "../../src/core/loop-path";
 import { buildSpline, closestOnSpline } from "../../src/core/spline";
 import { FIXED_STEP_SECONDS } from "../../src/core/loop";
 import {
   createControllerState,
+  FALL_RESET_Y,
+  respawnPoint,
   stepController,
   type ControllerState,
   type GroundQuery,
@@ -488,19 +497,83 @@ describe("controller states", () => {
     }
     expect(fast.state.mode).toBe("run");
     expect(fast.position.x).toBeGreaterThan(6);
+    expect(Math.abs(fast.velocity.x)).toBeLessThan(Math.abs(fast.velocity.z) * 0.08);
 
-    let slow = body({
-      state: { ...createControllerState(), facing: { x: 0, y: 0, z: 1 } },
-      position: { x: 0, y: 0.6, z: 0 },
-      velocity: { x: 0, y: 0, z: 24 },
+    const accepted = rideLoop(course, tuning.loopEnterSpeed + 0.05);
+    expect(accepted.state.mode).toBe("run");
+    expect(accepted.position.x).toBeGreaterThan(6);
+
+    const refused = step(
+      body({
+        state: { ...createControllerState(), facing: { x: 0, y: 0, z: 1 } },
+        position: { x: 0, y: 0.6, z: 0 },
+        velocity: { x: 0, y: 0, z: tuning.loopEnterSpeed - 4 },
+      }),
+      actions({ wish: { x: 0, y: 0, z: 1 } }),
+      ground(),
+      { loopCourse: course },
+    );
+    expect(refused.state.mode).toBe("run");
+    expect(refused.state.loopDistance).toBeLessThan(0);
+
+    let dropping = body({
+      state: {
+        ...createControllerState(),
+        mode: "loopRun",
+        loopDistance: 8,
+        loopSpeed: tuning.loopExitSpeed - 3,
+        loopBlend: 1,
+        facing: { x: 0, y: 0, z: 1 },
+      },
+      position: { x: 0, y: 1, z: 4 },
+      velocity: { x: 0, y: 0, z: tuning.loopExitSpeed - 3 },
     });
-    slow = step(slow, actions({ wish: { x: 0, y: 0, z: 1 } }), ground(), { loopCourse: course });
-    if (slow.state.mode === "loopRun") {
-      for (let frame = 0; frame < 400 && slow.state.mode === "loopRun"; frame += 1) {
-        slow = step(slow, actions(), ground({ hit: false }), { loopCourse: course });
-      }
-    }
-    expect(slow.state.mode).toBe("fall");
+    dropping = step(dropping, actions(), ground({ hit: false }), { loopCourse: course });
+    expect(dropping.state.mode).toBe("fall");
+  });
+
+  it("eases onto the loop without a position or up-vector pop", () => {
+    const course = loopCourse();
+    const start = { x: 0.45, y: 0.7, z: 0.25 };
+    const nearest = closestLoop(course, start);
+    expect(nearest.gap).toBeLessThanOrEqual(tuning.loopGrab);
+    expect(nearest.distance).toBeLessThanOrEqual(tuning.loopEntryWindow);
+    const entered = step(
+      body({
+        state: { ...createControllerState(), facing: { x: 0, y: 0, z: 1 } },
+        position: start,
+        velocity: { x: 0, y: 0, z: 32 },
+      }),
+      actions({ wish: { x: 0, y: 0, z: 1 } }),
+      ground(),
+      { loopCourse: course },
+    );
+    expect(entered.state.mode).toBe("loopRun");
+    const moved = length(sub(entered.position, start));
+    expect(moved).toBeLessThan(32 * DT + 0.35);
+    expect(entered.state.up.y).toBeGreaterThan(Math.cos((2.5 * Math.PI) / 180));
+  });
+
+  it("leaves the loop straight and lands on a deck that reaches the exit spring", () => {
+    const course = loopCourse();
+    const mouth = sampleLoop(course, 0);
+    const exit = sampleLoop(course, course.spline.length);
+    expect(Math.abs(mouth.tangent.x)).toBeLessThan(0.05);
+    expect(Math.abs(exit.tangent.x)).toBeLessThan(0.05);
+    expect(exit.tangent.z).toBeGreaterThan(0.9);
+    const deck = loopExitDeck(exit.point);
+    const half = LOOP_EXIT_DECK_DEPTH / 2;
+    expect(deck.center.x).toBeCloseTo(exit.point.x, 5);
+    expect(deck.center.z + half - exit.point.z).toBeGreaterThanOrEqual(25);
+    const springZ = exit.point.z + 6;
+    expect(springZ).toBeGreaterThan(deck.center.z - half);
+    expect(springZ).toBeLessThan(deck.center.z + half);
+  });
+
+  it("respawns below the fall line onto the last safe point", () => {
+    const safe = { x: 2, y: 1, z: 4 };
+    expect(respawnPoint(FALL_RESET_Y, safe)).toBeNull();
+    expect(respawnPoint(FALL_RESET_Y - 0.1, safe)).toEqual(safe);
   });
 
   it("jumps off a curved surface along its normal", () => {
@@ -515,6 +588,37 @@ describe("controller states", () => {
     expect(hopped.velocity.y).toBeGreaterThan(tuning.jumpSpeed - 1);
   });
 });
+
+function loopCourse(): LoopCourse {
+  return buildLoopPath({
+    mouth: { x: 0, y: 0, z: 0 },
+    forward: { x: 0, y: 0, z: 1 },
+    up: { x: 0, y: 1, z: 0 },
+    radius: tuning.loopRadius,
+    lateralShift: 8,
+    samples: 64,
+  });
+}
+
+function rideLoop(course: LoopCourse, alongSpeed: number): Body {
+  const mouth = sampleLoop(course, 0);
+  const tangentLength = Math.hypot(mouth.tangent.x, mouth.tangent.y, mouth.tangent.z) || 1;
+  let runner = body({
+    state: { ...createControllerState(), facing: { x: 0, y: 0, z: 1 } },
+    position: { x: 0, y: 0.6, z: 0 },
+    velocity: {
+      x: (mouth.tangent.x * alongSpeed) / tangentLength,
+      y: (mouth.tangent.y * alongSpeed) / tangentLength,
+      z: (mouth.tangent.z * alongSpeed) / tangentLength,
+    },
+  });
+  runner = step(runner, actions({ wish: { x: 0, y: 0, z: 1 } }), ground(), { loopCourse: course });
+  expect(runner.state.mode).toBe("loopRun");
+  for (let frame = 0; frame < 500 && runner.state.mode === "loopRun"; frame += 1) {
+    runner = step(runner, actions(), ground({ hit: false }), { loopCourse: course });
+  }
+  return runner;
+}
 
 function runFor(frames: number, nextActions: PlayerActions, nextGround: GroundQuery): Body {
   let runner = body();

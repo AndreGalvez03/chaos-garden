@@ -18,14 +18,16 @@ import { LOOP_COLLISION_BIT, readSurface } from "../levels/surface";
 import { buildYard, YARD_SPAWN } from "../levels/yard";
 import {
   advanceCameraRig,
-  blendCameraRig,
+  cameraClearanceLimit,
   createCameraRig,
   smoothCameraClearance,
   type CameraRig,
 } from "../player/camera";
 import {
   createControllerState,
+  FALL_RESET_Y,
   modeLabel,
+  respawnPoint,
   stepController,
   wishFromStick,
   type ControllerState,
@@ -82,6 +84,8 @@ export class PlaygroundScene {
   private currFov = 0.9;
   private clearance = 6;
   private cameraSphere: PhysicsShapeSphere | null = null;
+  private cameraSphereRadius = -1;
+  private readonly safePos = YARD_SPAWN.clone();
   private readonly onResume = (): void => {
     this.app.store.set({ paused: false });
   };
@@ -118,6 +122,7 @@ export class PlaygroundScene {
 
   enter(): Promise<void> {
     this.disposed = false;
+    this.app.ui.showLoading();
     return this.mount();
   }
 
@@ -148,7 +153,7 @@ export class PlaygroundScene {
     this.rig.position = { x: YARD_SPAWN.x, y: YARD_SPAWN.y + 3, z: YARD_SPAWN.z - 6 };
     this.camera = new FreeCamera("follow", new Vector3(0, 3, -12), scene);
     this.camera.minZ = 0.05;
-    this.cameraSphere = new PhysicsShapeSphere(Vector3.Zero(), this.app.tuning.cameraSphere, scene);
+    this.ensureCameraSphere(scene);
     this.seedCamera();
     this.scene = scene;
     this.ready = true;
@@ -197,6 +202,7 @@ export class PlaygroundScene {
     const tuning = this.app.tuning;
     this.gravity.set(0, -tuning.gravity, 0);
     scene.getPhysicsEngine()?.setGravity(this.gravity);
+    this.ensureCameraSphere(scene);
 
     const body = hero.aggregate.body;
     const position = toVec(hero.body.position);
@@ -207,18 +213,19 @@ export class PlaygroundScene {
       z: this.bodyVelocity.z,
     };
     const ground = this.probe(scene, hero, position);
+    const gate = this.app.tuningUi.consumesMove;
     const output = stepController({
       state: this.sim,
       position,
       velocity,
       actions: {
-        wish: wishFromStick(input.move.x, input.move.y, this.rig.yaw),
-        balance: input.move.x,
-        throttle: input.move.y,
-        jumpHeld: input.jump,
-        jumpPressed: input.jumpPressed,
-        rollHeld: input.attack,
-        dashPressed: input.actionPressed,
+        wish: gate ? { x: 0, y: 0, z: 0 } : wishFromStick(input.move.x, input.move.y, this.rig.yaw),
+        balance: gate ? 0 : input.move.x,
+        throttle: gate ? 0 : input.move.y,
+        jumpHeld: gate ? false : input.jump,
+        jumpPressed: gate ? false : input.jumpPressed,
+        rollHeld: gate ? false : input.attack,
+        dashPressed: gate ? false : input.actionPressed,
       },
       ground,
       rail: this.nearestRail(position),
@@ -230,7 +237,7 @@ export class PlaygroundScene {
     this.sim = output.state;
     this.supported = output.supported;
 
-    const riding = output.ignoreLoopCollision && output.snap !== null;
+    let riding = output.ignoreLoopCollision && output.snap !== null;
     this.velocity.set(
       riding ? 0 : output.velocity.x,
       riding ? 0 : output.velocity.y,
@@ -250,8 +257,25 @@ export class PlaygroundScene {
     scene.getPhysicsEngine()?._step(step);
     body.disablePreStep = preStep;
     this.currentPos.copyFrom(hero.body.position);
+    if (respawnPoint(this.currentPos.y, toVec(this.safePos))) {
+      hero.body.position.copyFrom(this.safePos);
+      body.setLinearVelocity(this.zero);
+      body.setAngularVelocity(this.zero);
+      this.sim = createControllerState();
+      this.currentPos.copyFrom(this.safePos);
+      this.previousPos.copyFrom(this.safePos);
+      this.supported = true;
+      riding = false;
+    } else if (
+      output.supported &&
+      (output.state.mode === "idle" || output.state.mode === "run") &&
+      this.currentPos.y > FALL_RESET_Y
+    ) {
+      this.safePos.copyFrom(this.currentPos);
+    }
 
     body.getLinearVelocityToRef(this.bodyVelocity);
+    const loopRide = this.sim.mode === "loopRun" && this.sim.loopDistance >= 0;
     const aim = advanceCameraRig(
       this.rig,
       {
@@ -262,26 +286,27 @@ export class PlaygroundScene {
         pointerLocked: document.pointerLockElement === this.canvas(),
       },
       toVec(this.currentPos),
-      output.up,
+      this.sim.up,
       riding
         ? output.velocity
         : { x: this.bodyVelocity.x, y: this.bodyVelocity.y, z: this.bodyVelocity.z },
-      output.facing,
+      this.sim.facing,
       step,
       tuning,
-      output.state.mode === "loopRun" || output.state.mode === "railGrind",
+      loopRide,
     );
-    const obstruction = this.cameraClearance(aim.lookAt, aim.desired, body);
     const desiredDistance = Math.hypot(
       aim.desired.x - aim.lookAt.x,
       aim.desired.y - aim.lookAt.y,
       aim.desired.z - aim.lookAt.z,
     );
-    const allowed =
-      obstruction === null
-        ? desiredDistance
-        : Math.min(desiredDistance, Math.max(0, obstruction - tuning.cameraCollisionPad));
-    this.clearance = smoothCameraClearance(this.clearance, allowed, step, tuning);
+    if (loopRide) {
+      this.clearance = desiredDistance;
+    } else {
+      const obstruction = this.cameraClearance(aim.lookAt, aim.desired, body);
+      const allowed = cameraClearanceLimit(desiredDistance, obstruction, false, tuning);
+      this.clearance = smoothCameraClearance(this.clearance, allowed, step, tuning);
+    }
     const span = Math.max(desiredDistance, 1e-6);
     this.rig = aim.rig;
     this.rig.position = {
@@ -310,29 +335,13 @@ export class PlaygroundScene {
     hero.visual.position.copyFrom(this.visualPos);
     this.aimBody(hero, this.sim.facing, this.sim.up);
 
-    const view = blendCameraRig(
-      {
-        ...this.rig,
-        position: { x: this.prevCam.x, y: this.prevCam.y, z: this.prevCam.z },
-        lookAt: { x: this.prevLook.x, y: this.prevLook.y, z: this.prevLook.z },
-        up: { x: this.prevUp.x, y: this.prevUp.y, z: this.prevUp.z },
-        fov: this.prevFov,
-      },
-      {
-        ...this.rig,
-        position: { x: this.currCam.x, y: this.currCam.y, z: this.currCam.z },
-        lookAt: { x: this.currLook.x, y: this.currLook.y, z: this.currLook.z },
-        up: { x: this.currUp.x, y: this.currUp.y, z: this.currUp.z },
-        fov: this.currFov,
-      },
-      alpha,
-    );
-    this.camTarget.set(view.lookAt.x, view.lookAt.y, view.lookAt.z);
-    this.camPos.set(view.position.x, view.position.y, view.position.z);
-    this.camUp.set(view.up.x, view.up.y, view.up.z);
+    const blend = Math.min(1, Math.max(0, alpha));
+    Vector3.LerpToRef(this.prevCam, this.currCam, blend, this.camPos);
+    Vector3.LerpToRef(this.prevLook, this.currLook, blend, this.camTarget);
+    Vector3.SlerpToRef(this.prevUp, this.currUp, blend, this.camUp);
     camera.position.copyFrom(this.camPos);
     camera.upVector.copyFrom(this.camUp);
-    camera.fov = view.fov;
+    camera.fov = this.prevFov + (this.currFov - this.prevFov) * blend;
     camera.setTarget(this.camTarget);
 
     const canvas = this.canvas();
@@ -362,6 +371,7 @@ export class PlaygroundScene {
     this.ready = false;
     this.cameraSphere?.dispose();
     this.cameraSphere = null;
+    this.cameraSphereRadius = -1;
     this.canvas()?.removeEventListener("click", this.onClick);
     window.removeEventListener("blur", this.onBlur);
     document.removeEventListener("visibilitychange", this.onVisibility);
@@ -457,6 +467,14 @@ export class PlaygroundScene {
     const limit = this.app.tuning.railGrabRadius * 2.2;
     if (!best || best.gap > limit) return null;
     return best;
+  }
+
+  private ensureCameraSphere(scene: Scene): void {
+    const radius = Math.max(0.05, this.app.tuning.cameraSphere);
+    if (this.cameraSphere && Math.abs(radius - this.cameraSphereRadius) < 1e-4) return;
+    this.cameraSphere?.dispose();
+    this.cameraSphere = new PhysicsShapeSphere(Vector3.Zero(), radius, scene);
+    this.cameraSphereRadius = radius;
   }
 
   private cameraClearance(

@@ -166,6 +166,10 @@ button:focus-visible {
   font-size: 0.82rem;
 }
 
+.tuning-row.is-active {
+  color: var(--amber);
+}
+
 .tuning-row input[type="range"] {
   grid-column: 1 / -1;
   width: 100%;

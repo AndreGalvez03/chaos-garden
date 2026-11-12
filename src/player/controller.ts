@@ -78,6 +78,7 @@ export interface ControllerState {
   loopDistance: number;
   loopSpeed: number;
   loopCooldown: number;
+  loopBlend: number;
   facing: Vec3;
   up: Vec3;
 }
@@ -126,6 +127,14 @@ const MODE_LABELS: Record<PlayerMode, string> = {
   loopRun: "Loop",
 };
 
+/** Below this height the runner is put back on the last safe ground. */
+export const FALL_RESET_Y = -20;
+
+export function respawnPoint(height: number, safe: Vec3): Vec3 | null {
+  if (height >= FALL_RESET_Y) return null;
+  return { x: safe.x, y: safe.y, z: safe.z };
+}
+
 export function modeLabel(mode: PlayerMode): string {
   return MODE_LABELS[mode];
 }
@@ -154,6 +163,7 @@ export function createControllerState(): ControllerState {
     loopDistance: -1,
     loopSpeed: 0,
     loopCooldown: 0,
+    loopBlend: 0,
     facing: { ...VEC3_FORWARD },
     up: { ...VEC3_UP },
   };
@@ -905,6 +915,7 @@ function tryLoopRide(
   state.mode = "loopRun";
   state.loopDistance = nearest.distance;
   state.loopSpeed = along;
+  state.loopBlend = 0;
   return tickLoopRide(state, input, tuning, input.dt);
 }
 
@@ -935,6 +946,7 @@ function tickLoopRide(
   }
   if (state.loopSpeed < tuning.loopExitSpeed) return leaveLoop(state, here, tuning);
   state.loopDistance += state.loopSpeed * dt;
+  state.loopBlend = Math.min(1, state.loopBlend + dt / Math.max(tuning.loopBlendTime, 0.02));
   if (state.loopDistance >= course.spline.length) {
     const end = sampleLoop(course, course.spline.length);
     state.mode = "run";
@@ -951,13 +963,26 @@ function tickLoopRide(
     );
   }
   const next = sampleLoop(course, state.loopDistance);
-  state.up = next.up;
-  state.facing = alignFacing(next.tangent, next.up);
-  return motion(
-    scale(next.tangent, state.loopSpeed),
-    add(next.point, scale(next.up, tuning.probeHalfHeight)),
-    0,
-  );
+  const curve = add(next.point, scale(next.up, tuning.probeHalfHeight));
+  const blend = state.loopBlend;
+  const pulled = lerpToward(input.position, curve, blend);
+  const gap = length(sub(pulled, input.position));
+  const stepLimit = state.loopSpeed * dt + 0.3;
+  const snap =
+    gap <= stepLimit || gap <= VECTOR_EPSILON
+      ? pulled
+      : lerpToward(input.position, pulled, stepLimit / gap);
+  state.up = slerpDir(state.up, next.up, blend < 1 ? Math.min(blend, 0.35) : 1);
+  state.facing = alignFacing(next.tangent, state.up);
+  return motion(scale(next.tangent, state.loopSpeed), snap, 0);
+}
+
+function lerpToward(from: Vec3, to: Vec3, t: number): Vec3 {
+  return {
+    x: from.x + (to.x - from.x) * t,
+    y: from.y + (to.y - from.y) * t,
+    z: from.z + (to.z - from.z) * t,
+  };
 }
 
 function leaveLoop(state: ControllerState, frame: LoopFrame | null, tuning: PlayerTuning): Motion {

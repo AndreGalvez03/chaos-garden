@@ -10,6 +10,7 @@ export class TuningOverlay {
   private visible = false;
   private focus = 0;
   private steered = false;
+  private padEngaged = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -61,15 +62,27 @@ export class TuningOverlay {
       row.append(name, slider, value);
       this.root.append(row);
     }
+    this.markFocus();
   }
 
   get isVisible(): boolean {
     return this.visible;
   }
 
+  /** True after a gamepad nudge until the overlay closes. Movement should wait. */
+  get consumesMove(): boolean {
+    return this.visible && this.padEngaged;
+  }
+
   setVisible(visible: boolean): void {
     this.visible = visible;
     this.root.hidden = !visible;
+    if (!visible) {
+      this.padEngaged = false;
+      this.steered = false;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && this.root.contains(active)) active.blur();
+    }
   }
 
   setReadout(mode: string, speed: number, grounded: boolean): void {
@@ -84,6 +97,7 @@ export class TuningOverlay {
       this.steered = false;
       return;
     }
+    this.padEngaged = true;
     if (this.steered) return;
     this.steered = true;
     const sliders = [...this.root.querySelectorAll("input[type=range]")].filter(
@@ -92,7 +106,7 @@ export class TuningOverlay {
     if (sliders.length === 0) return;
     if (Math.abs(y) >= Math.abs(x)) {
       this.focus = (this.focus + (y > 0 ? -1 : 1) + sliders.length) % sliders.length;
-      sliders[this.focus]?.focus();
+      this.markFocus();
       return;
     }
     const slider = sliders[this.focus] ?? sliders[0];
@@ -103,7 +117,14 @@ export class TuningOverlay {
     const next = Math.min(max, Math.max(min, Number(slider.value) + Math.sign(x) * step));
     slider.value = String(next);
     slider.dispatchEvent(new Event("input", { bubbles: true }));
-    slider.focus();
+    this.markFocus();
+  }
+
+  private markFocus(): void {
+    const rows = this.root.querySelectorAll(".tuning-row");
+    rows.forEach((row, index) => {
+      row.classList.toggle("is-active", index === this.focus);
+    });
   }
 
   private apply(next: PlayerTuning): void {

@@ -16,6 +16,20 @@ export interface PlayHudState {
   onCredits: () => void;
 }
 
+export function showFailure(root: HTMLElement, error: unknown): void {
+  const message = error instanceof Error ? error.message : "The view failed to start.";
+  root.replaceChildren();
+  const panel = document.createElement("section");
+  panel.className = "panel";
+  const heading = document.createElement("h1");
+  heading.textContent = GAME_TITLE;
+  const body = document.createElement("p");
+  body.textContent = message;
+  panel.append(heading, body);
+  root.append(panel);
+  console.error(error);
+}
+
 export class UiRoot implements MenuSurface {
   private mode: SceneId | null = null;
   private pauseOpen = false;
@@ -37,6 +51,21 @@ export class UiRoot implements MenuSurface {
 
   setScene(id: SceneId): void {
     this.root.dataset.scene = id;
+  }
+
+  showLoading(): void {
+    this.mode = null;
+    this.pauseOpen = false;
+    this.root.replaceChildren();
+    const panel = document.createElement("section");
+    panel.className = "panel";
+    const heading = document.createElement("h1");
+    heading.textContent = GAME_TITLE;
+    const body = document.createElement("p");
+    body.className = "prompt";
+    body.textContent = "Loading…";
+    panel.append(heading, body);
+    this.root.append(panel);
   }
 
   showTitle(onStart: () => void, onCredits: () => void): void {

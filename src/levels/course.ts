@@ -9,10 +9,11 @@ import { CreatePolyhedron } from "@babylonjs/core/Meshes/Builders/polyhedronBuil
 import { PhysicsAggregate } from "@babylonjs/core/Physics/v2/physicsAggregate";
 import { PhysicsShapeType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin";
 import type { Scene } from "@babylonjs/core/scene";
-import { buildLoopPath, type LoopCourse } from "../core/loop-path";
+import { buildLoopPath, loopExitDeck, type LoopCourse } from "../core/loop-path";
 import type { Vec3 } from "../core/math";
 import { buildSpline, type Spline } from "../core/spline";
 import { LOOP_COLLISION_BIT, type SurfaceMeta } from "./surface";
+import { DEFAULT_TUNING } from "../player/tuning";
 
 export interface CourseContent {
   rails: Spline[];
@@ -112,7 +113,7 @@ function liftedLoop(scene: Scene, material: StandardMaterial): LoopCourse {
     mouth: { x: 0, y: 7, z: 200 },
     forward: { x: 0, y: 0, z: 1 },
     up: { x: 0, y: 1, z: 0 },
-    radius: 7,
+    radius: DEFAULT_TUNING.loopRadius,
     lateralShift: 8,
     samples: 64,
   });
@@ -165,7 +166,8 @@ function normalizeVec(value: Vec3): Vec3 {
 }
 
 function exitDeck(scene: Scene, material: StandardMaterial, exit: Vec3): void {
-  box(scene, "loop-exit", [6, 0.7, 16], [exit.x, exit.y - 0.35, exit.z], material, {
+  const deck = loopExitDeck(exit);
+  box(scene, "loop-exit", deck.size, [deck.center.x, deck.center.y, deck.center.z], material, {
     kind: "ground",
   });
 }

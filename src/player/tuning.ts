@@ -53,6 +53,8 @@ export interface PlayerTuning {
   springLockTime: number;
   loopEnterSpeed: number;
   loopExitSpeed: number;
+  loopRadius: number;
+  loopBlendTime: number;
   loopUprightDot: number;
   loopEntryWindow: number;
   loopGrab: number;
@@ -453,7 +455,17 @@ const FIELDS: readonly TunableSpec[] = [
     min: 6,
     max: 40,
     step: 0.5,
-    value: 20,
+    value: 29,
+  },
+  { key: "loopRadius", label: "Loop radius", group: "Loop", min: 4, max: 12, step: 0.1, value: 7 },
+  {
+    key: "loopBlendTime",
+    label: "Loop blend time",
+    group: "Loop",
+    min: 0.02,
+    max: 0.4,
+    step: 0.01,
+    value: 0.12,
   },
   {
     key: "loopExitSpeed",
@@ -480,9 +492,9 @@ const FIELDS: readonly TunableSpec[] = [
     min: 0.5,
     max: 8,
     step: 0.1,
-    value: 3.5,
+    value: 1.2,
   },
-  { key: "loopGrab", label: "Loop grab", group: "Loop", min: 0.4, max: 3, step: 0.05, value: 1.6 },
+  { key: "loopGrab", label: "Loop grab", group: "Loop", min: 0.4, max: 3, step: 0.05, value: 0.85 },
   {
     key: "loopEntryAlign",
     label: "Loop entry align",
@@ -824,6 +836,13 @@ export function validateTuning(tuning: PlayerTuning): string[] {
     errors.push("Top speed must sit under the overspeed cap.");
   if (tuning.loopExitSpeed >= tuning.loopEnterSpeed) {
     errors.push("Loop exit speed must sit under the enter speed.");
+  }
+  const loopFinish = Math.sqrt(
+    tuning.loopExitSpeed ** 2 +
+      4 * tuning.gravity * tuning.loopRadius * Math.max(tuning.slopeInfluence, 0),
+  );
+  if (tuning.loopEnterSpeed + 0.05 < loopFinish) {
+    errors.push("Loop entry speed must be enough to finish the loop.");
   }
   if (tuning.rollBurstMin > tuning.rollBurstMax) errors.push("Burst speeds are reversed.");
   if (tuning.cameraDistanceMin > tuning.cameraDistanceMax)

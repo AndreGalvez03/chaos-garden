@@ -17,6 +17,7 @@ export class SceneManager {
   constructor(
     private readonly store: GameStore,
     private readonly factory: Record<SceneId, () => SceneController>,
+    private readonly onEnterError?: (error: unknown) => void,
   ) {}
 
   get currentId(): SceneId | null {
@@ -69,6 +70,8 @@ export class SceneManager {
     const next = this.factory[id]();
     this.current = next;
     this.store.set({ sceneId: id, paused: false });
-    void next.enter();
+    void Promise.resolve(next.enter()).catch((error: unknown) => {
+      this.onEnterError?.(error);
+    });
   }
 }

@@ -34,8 +34,13 @@ export class InputManager {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (insideTuning(event.target)) {
-      if (event.code === "Escape" && event.target instanceof HTMLElement) event.target.blur();
-      else return;
+      const focus = event.target instanceof HTMLElement ? event.target : null;
+      if (event.code === "Escape") {
+        focus?.blur();
+        return;
+      }
+      if (event.code !== "Backquote") return;
+      focus?.blur();
     }
     if (SCROLL_CODES.has(event.code) && !isTypingTarget(event.target)) {
       event.preventDefault();

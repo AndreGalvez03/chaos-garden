@@ -10,7 +10,24 @@ export interface LoopFrame {
   gap: number;
 }
 
-/** A full turn whose exit is shifted sideways so it does not land on the entrance. */
+/** Landing deck length, and how far that deck starts before the exit point. */
+export const LOOP_EXIT_DECK_DEPTH = 32;
+export const LOOP_EXIT_DECK_LEAD = 2;
+
+/** Deck centered on the exit line, long enough to catch the landing and the spring. */
+export function loopExitDeck(exit: Vec3): { center: Vec3; size: [number, number, number] } {
+  const depth = LOOP_EXIT_DECK_DEPTH;
+  return {
+    center: {
+      x: exit.x,
+      y: exit.y - 0.35,
+      z: exit.z + depth / 2 - LOOP_EXIT_DECK_LEAD,
+    },
+    size: [6, 0.7, depth],
+  };
+}
+
+/** A full turn whose sideways shift eases out, so both ends leave straight. */
 export interface LoopCourse {
   spline: Spline;
   ups: readonly Vec3[];
@@ -33,9 +50,11 @@ export function buildLoopPath(spec: {
   const ups: Vec3[] = [];
   for (let index = 0; index <= count; index += 1) {
     const phi = (index / count) * Math.PI * 2;
+    const along = phi / (Math.PI * 2);
+    const eased = along * along * (3 - 2 * along);
     const center = add(
       add(spec.mouth, scale(up, spec.radius)),
-      scale(right, spec.lateralShift * (phi / (Math.PI * 2))),
+      scale(right, spec.lateralShift * eased),
     );
     const point = add(
       add(center, scale(up, -spec.radius * Math.cos(phi))),

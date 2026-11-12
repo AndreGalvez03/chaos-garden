@@ -57,8 +57,9 @@ export function createCameraRig(yaw = 0, pitch = 0.42): CameraRig {
 
 /**
  * Follows behind the runner, widens with speed, and orbits from the right
- * stick. Mouse orbit applies only while the pointer is locked. The scene
- * passes a wall distance from a ray cast after the physics step.
+ * stick. Mouse orbit applies only while the pointer is locked. Pass true for
+ * `headingFromFacing` on a loop ride: yaw stays where it was at entry, and the
+ * offset is built in the surface frame instead of world yaw.
  */
 export function advanceCameraRig(
   rig: CameraRig,
@@ -93,15 +94,17 @@ export function advanceCameraRig(
   );
 
   const speed = length(velocity);
-  const headingSource = headingFromFacing || speed < tuning.cameraAutoSpeed ? facing : velocity;
-  const flat = { x: headingSource.x, y: 0, z: headingSource.z };
-  if (length(flat) > 0.35) {
-    next.yaw = dampAngle(
-      next.yaw,
-      Math.atan2(flat.x, flat.z) + next.yawOffset,
-      tuning.cameraFollow,
-      dt,
-    );
+  if (!headingFromFacing) {
+    const headingSource = speed < tuning.cameraAutoSpeed ? facing : velocity;
+    const flat = { x: headingSource.x, y: 0, z: headingSource.z };
+    if (length(flat) > 0.35) {
+      next.yaw = dampAngle(
+        next.yaw,
+        Math.atan2(flat.x, flat.z) + next.yawOffset,
+        tuning.cameraFollow,
+        dt,
+      );
+    }
   }
 
   const pace = clamp(speed / Math.max(tuning.cameraDistanceSpeed, 0.001), 0, 1);
@@ -128,8 +131,44 @@ export function advanceCameraRig(
   );
   next.lookAt = dampVec(next.lookAt, lookAt, tuning.cameraPosFollow, dt);
 
-  const offset = cameraOffset(next.yaw, next.pitch, next.distance);
+  const offset = headingFromFacing
+    ? loopFrameOffset(forward, next.up, next.pitch, next.distance)
+    : cameraOffset(next.yaw, next.pitch, next.distance);
   return { rig: next, lookAt: next.lookAt, desired: add(next.lookAt, offset) };
+}
+
+/**
+ * While a loop ride is framed in the curve's own axes, a wall cast must not
+ * shorten it. The ribbon sits outside that frame and would otherwise pull the
+ * camera in to the clearance floor.
+ */
+export function cameraClearanceLimit(
+  desiredDistance: number,
+  obstruction: number | null,
+  holdOpen: boolean,
+  tuning: PlayerTuning,
+): number {
+  if (holdOpen || obstruction === null || !Number.isFinite(obstruction)) return desiredDistance;
+  return Math.min(desiredDistance, Math.max(0, obstruction - tuning.cameraCollisionPad));
+}
+
+/** Offset behind the tangent and along the surface up, so the view stays inside a loop. */
+function loopFrameOffset(tangent: Vec3, up: Vec3, pitch: number, distance: number): Vec3 {
+  const tangentLength = length(tangent);
+  const upLength = length(up);
+  const tx = tangentLength > VECTOR_EPSILON ? tangent.x / tangentLength : 0;
+  const ty = tangentLength > VECTOR_EPSILON ? tangent.y / tangentLength : 0;
+  const tz = tangentLength > VECTOR_EPSILON ? tangent.z / tangentLength : 1;
+  const ux = upLength > VECTOR_EPSILON ? up.x / upLength : 0;
+  const uy = upLength > VECTOR_EPSILON ? up.y / upLength : 1;
+  const uz = upLength > VECTOR_EPSILON ? up.z / upLength : 0;
+  const back = -Math.cos(pitch) * distance;
+  const raised = Math.sin(pitch) * distance;
+  return {
+    x: tx * back + ux * raised,
+    y: ty * back + uy * raised,
+    z: tz * back + uz * raised,
+  };
 }
 
 /** Midpoint blend used while drawing between two fixed steps. */

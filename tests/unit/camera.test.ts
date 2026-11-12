@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { length, sub } from "../../src/core/math";
+import { buildLoopPath, sampleLoop } from "../../src/core/loop-path";
 import { FIXED_STEP_SECONDS } from "../../src/core/loop";
 import {
   advanceCameraRig,
   blendCameraRig,
+  cameraClearanceLimit,
   createCameraRig,
   resolveCameraPosition,
   smoothCameraClearance,
@@ -115,6 +117,59 @@ describe("follow camera", () => {
     expect(mid.position.y).toBeCloseTo(3, 5);
     expect(mid.position.z).toBeCloseTo(-6, 5);
     expect(mid.fov).toBeCloseTo(1, 5);
+  });
+
+  it("keeps heading and distance through a full loop", () => {
+    const course = buildLoopPath({
+      mouth: { x: 0, y: 0, z: 0 },
+      forward: { x: 0, y: 0, z: 1 },
+      up: { x: 0, y: 1, z: 0 },
+      radius: DEFAULT_TUNING.loopRadius,
+      lateralShift: 8,
+      samples: 64,
+    });
+    let rig = createCameraRig(0, 0.42);
+    const startYaw = rig.yaw;
+    let minDistance = Infinity;
+    const steps = 64;
+    for (let index = 0; index <= steps; index += 1) {
+      const frame = sampleLoop(course, (index / steps) * course.spline.length);
+      const position = {
+        x: frame.point.x + frame.up.x * 0.62,
+        y: frame.point.y + frame.up.y * 0.62,
+        z: frame.point.z + frame.up.z * 0.62,
+      };
+      const aim = advanceCameraRig(
+        rig,
+        look,
+        position,
+        frame.up,
+        {
+          x: frame.tangent.x * 32,
+          y: frame.tangent.y * 32,
+          z: frame.tangent.z * 32,
+        },
+        frame.tangent,
+        FIXED_STEP_SECONDS,
+        DEFAULT_TUNING,
+        true,
+      );
+      rig = aim.rig;
+      const yawDelta = Math.atan2(Math.sin(rig.yaw - startYaw), Math.cos(rig.yaw - startYaw));
+      expect(Math.abs(yawDelta)).toBeLessThan((20 * Math.PI) / 180);
+      minDistance = Math.min(
+        minDistance,
+        Math.hypot(
+          aim.desired.x - aim.lookAt.x,
+          aim.desired.y - aim.lookAt.y,
+          aim.desired.z - aim.lookAt.z,
+        ),
+      );
+    }
+    expect(minDistance).toBeGreaterThan(3);
+    const shortened = cameraClearanceLimit(minDistance, 1.2, false, DEFAULT_TUNING);
+    expect(shortened).toBeLessThan(2);
+    expect(cameraClearanceLimit(minDistance, 1.2, true, DEFAULT_TUNING)).toBe(minDistance);
   });
 
   it("snaps the camera in toward a wall and eases it back out", () => {
