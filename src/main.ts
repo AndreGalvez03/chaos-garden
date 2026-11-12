@@ -1,5 +1,5 @@
 import { GAME_TITLE } from "./config";
-import { startGame } from "./core/engine";
+import { startGame } from "./app/bootstrap";
 import "./ui/styles.css";
 
 document.title = GAME_TITLE;

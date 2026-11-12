@@ -34,7 +34,27 @@ export default tseslint.config(
           patterns: [
             {
               group: ["@babylonjs/*", "@babylonjs/**"],
-              message: "Pet rules stay free of the renderer so they can be tested on their own.",
+              message: "Pet rules stay inside src/pets.",
+            },
+            {
+              group: ["../*", "../**"],
+              message: "Pet rules stay inside src/pets.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/core/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["../scenes", "../scenes/**", "../ui", "../ui/**"],
+              message: "Core does not import scenes or UI. Wire those from src/app.",
             },
           ],
         },

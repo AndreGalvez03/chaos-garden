@@ -32,3 +32,20 @@ export interface DigitalDown {
   pause: boolean;
   confirm: boolean;
 }
+
+export function emptyInputFrame(device: DeviceKind = "keyboard"): InputFrame {
+  return {
+    move: { x: 0, y: 0 },
+    camera: { x: 0, y: 0 },
+    mouse: { x: 0, y: 0 },
+    jump: false,
+    jumpPressed: false,
+    attack: false,
+    attackPressed: false,
+    action: false,
+    actionPressed: false,
+    pausePressed: false,
+    confirmPressed: false,
+    device,
+  };
+}

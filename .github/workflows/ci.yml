@@ -41,7 +41,7 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Asset, credit, and name checks
+      - name: Asset, credit, name, and boundary checks
         run: npm run check
 
       - name: Build

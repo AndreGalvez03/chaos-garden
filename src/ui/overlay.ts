@@ -3,6 +3,7 @@ import { GAME_TITLE } from "../config";
 import { GARDEN_THEMES } from "../garden";
 import type { SceneId } from "../core/game-state";
 import type { ControlSection } from "./control-list";
+import type { MenuSurface } from "./menu-nav";
 
 export interface PlayHudState {
   paused: boolean;
@@ -14,12 +15,17 @@ export interface PlayHudState {
   onCredits: () => void;
 }
 
-export class UiRoot {
+export class UiRoot implements MenuSurface {
   private mode: SceneId | null = null;
   private pauseOpen = false;
+  private pauseDevice = "";
   private deviceNode: HTMLElement | null = null;
   private fpsNode: HTMLElement | null = null;
   private hintNode: HTMLElement | null = null;
+  private shownDevice = "";
+  private shownHint = "";
+  private shownFps = -1;
+  private lastFpsWrite = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -104,22 +110,63 @@ export class UiRoot {
     const back = button("Back", "primary", onBack);
     panel.append(heading, note, list, back);
     this.root.append(panel);
+    requestAnimationFrame(() => {
+      if (back.isConnected) back.focus();
+    });
   }
 
   showPlay(state: PlayHudState): void {
     if (this.mode !== "playground") {
       this.mode = "playground";
       this.pauseOpen = false;
+      this.shownDevice = "";
+      this.shownHint = "";
+      this.shownFps = -1;
       this.mountHud();
     }
-    if (this.deviceNode) this.deviceNode.textContent = state.deviceLabel;
-    if (this.fpsNode) this.fpsNode.textContent = `${Math.round(state.fps)} FPS`;
-    if (this.hintNode) {
+    if (this.deviceNode && state.deviceLabel !== this.shownDevice) {
+      this.deviceNode.textContent = state.deviceLabel;
+      this.shownDevice = state.deviceLabel;
+    }
+    const roundedFps = Math.round(state.fps);
+    const now = performance.now();
+    if (
+      this.fpsNode &&
+      roundedFps !== this.shownFps &&
+      (this.lastFpsWrite === 0 || now - this.lastFpsWrite >= 250)
+    ) {
+      this.fpsNode.textContent = `${roundedFps} FPS`;
+      this.shownFps = roundedFps;
+      this.lastFpsWrite = now;
+    }
+    if (this.hintNode && state.hint !== this.shownHint) {
       this.hintNode.textContent = state.hint;
       this.hintNode.hidden = state.hint.length === 0;
+      this.shownHint = state.hint;
     }
-    if (state.paused && !this.pauseOpen) this.mountPause(state);
+    if (state.paused && this.pauseOpen && state.deviceLabel !== this.pauseDevice) {
+      this.clearPause();
+    }
+    if (state.paused && !this.pauseOpen) {
+      this.pauseDevice = state.deviceLabel;
+      this.mountPause(state);
+    }
     if (!state.paused && this.pauseOpen) this.clearPause();
+  }
+
+  moveMenuFocus(direction: -1 | 1): void {
+    const buttons = [...this.root.querySelectorAll(".panel button")];
+    if (buttons.length === 0) return;
+    const current = buttons.findIndex((entry) => entry === document.activeElement);
+    const start = current < 0 ? (direction > 0 ? -1 : 0) : current;
+    const next = (start + direction + buttons.length) % buttons.length;
+    const target = buttons[next];
+    if (target instanceof HTMLButtonElement) target.focus();
+  }
+
+  activateMenuButton(): void {
+    const active = document.activeElement;
+    if (active instanceof HTMLButtonElement && this.root.contains(active)) active.click();
   }
 
   private mountHud(): void {

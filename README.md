@@ -38,6 +38,8 @@ npm run preview
 
 Sticks use a radial deadzone. Bindings can be replaced through the input module, and the pause menu lists the active map. Xbox and PlayStation pads that report the standard gamepad mapping are labeled automatically. Other pads keep generic names and the same standard indexes when the browser says the mapping is standard.
 
+On the pause menu and the credits screen, the left stick or D-pad moves between buttons and the south button activates the focused one. Esc and the menu button always go back. Tab still moves focus. The yard pauses if the window blurs, the tab is hidden, or the pointer lock ends. Simulation steps are fixed, so a pause leaves the runner where it is.
+
 Attack and Action are wired in the yard as a small visual pulse and a short HUD note. The tuned movement set comes later.
 
 ## Scripts
@@ -71,4 +73,4 @@ A name check scans tracked files, and untracked files that are not ignored, agai
 
 ## GitHub Pages
 
-The Pages workflow publishes `dist/` when `main` is updated. In the repository settings, set the Pages source to **GitHub Actions** if it is not already.
+The Pages workflow publishes `dist/` only after the CI workflow has succeeded for that commit on `main`. In the repository settings, set the Pages source to **GitHub Actions** if it is not already, and require the `verify` check before merging to `main`.

@@ -4,8 +4,10 @@ import type { GameStore, SceneId } from "./game-state";
 export interface SceneController {
   readonly id: SceneId;
   enter(): void;
-  update(dt: number, input: InputFrame, fps: number): void;
   exit(): void;
+  beginFrame(input: InputFrame): void;
+  fixedUpdate(step: number, input: InputFrame): void;
+  render(alpha: number, fps: number): void;
 }
 
 export class SceneManager {
@@ -31,9 +33,25 @@ export class SceneManager {
     this.activate(id);
   }
 
-  update(dt: number, input: InputFrame, fps: number): void {
+  beginFrame(input: InputFrame): void {
     try {
-      this.current?.update(dt, input, fps);
+      this.current?.beginFrame(input);
+    } finally {
+      this.flush();
+    }
+  }
+
+  fixedUpdate(step: number, input: InputFrame): void {
+    try {
+      this.current?.fixedUpdate(step, input);
+    } finally {
+      this.flush();
+    }
+  }
+
+  render(alpha: number, fps: number): void {
+    try {
+      this.current?.render(alpha, fps);
     } finally {
       this.flush();
     }

@@ -68,6 +68,22 @@ describe("evaluateInput", () => {
     expect(frame.device).toBe("xbox");
   });
 
+  it("uses the d-pad when the stick is resting", () => {
+    const buttons = Array.from({ length: 16 }, () => false);
+    buttons[12] = true;
+    const { frame } = evaluateInput(
+      {
+        keys: new Set(),
+        mouseX: 0,
+        mouseY: 0,
+        pad: { family: "xbox", buttons, axes: [0, 0, 0, 0] },
+      },
+      bindings,
+    );
+    expect(frame.move).toEqual({ x: 0, y: 1 });
+    expect(frame.device).toBe("xbox");
+  });
+
   it("applies the deadzone to a resting stick", () => {
     const { frame } = evaluateInput(
       {

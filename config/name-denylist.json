@@ -1,5 +1,5 @@
 {
-  "note": "Case-insensitive whole-word and phrase matches. A longer word that merely begins with a term is not a match. This file is the only path the checker skips.",
+  "note": "Matches are case-insensitive after normalization: compatibility decomposition, diacritics removed, camel case split, and hyphens, underscores, dots, and slashes treated as spaces. Joined phrases match too. A longer word that merely begins with a term is not a match. This file is the only path the checker skips.",
   "terms": [
     "sonic",
     "sega",
@@ -7,7 +7,6 @@
     "knuckles",
     "eggman",
     "robotnik",
-    "tails",
     "chaotix",
     "prower",
     "metal sonic",

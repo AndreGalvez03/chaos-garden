@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { scanText, shouldScan, type NameHit } from "./lib/names";
 
 interface DenylistFile {
@@ -22,6 +22,7 @@ const tracked = execFileSync(
 
 const hits: NameHit[] = [];
 for (const file of tracked) {
+  if (!existsSync(file)) continue;
   const bytes = readFileSync(file);
   if (bytes.includes(0)) {
     hits.push(...scanText(file, "", denylist.terms));

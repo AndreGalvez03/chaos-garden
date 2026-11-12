@@ -3,17 +3,18 @@ import "@babylonjs/core/Physics/joinedPhysicsEngineComponent";
 import HavokPhysics from "@babylonjs/havok";
 import havokWasmUrl from "@babylonjs/havok/lib/esm/HavokPhysics.wasm?url";
 import { Engine } from "@babylonjs/core/Engines/engine";
-import { assetManifest } from "../content/assets";
 import { AudioBus } from "../audio/audio-bus";
-import { GameLoop } from "./loop";
-import { GameStore } from "./game-state";
-import type { AppContext } from "./runtime";
-import { SceneManager } from "./scene-manager";
+import { assetManifest } from "../content/assets";
+import { GameStore } from "../core/game-state";
+import { GameLoop } from "../core/loop";
+import { SceneManager } from "../core/scene-manager";
+import { InputLatch } from "../input/latch";
 import { InputManager } from "../input/input-manager";
 import { CreditsScene } from "../scenes/credits-scene";
 import { PlaygroundScene } from "../scenes/playground-scene";
 import { TitleScene } from "../scenes/title-scene";
 import { UiRoot } from "../ui/overlay";
+import type { AppContext } from "./context";
 
 export async function startGame(canvas: HTMLCanvasElement, overlay: HTMLElement): Promise<void> {
   const engine = new Engine(canvas, true, {
@@ -26,6 +27,7 @@ export async function startGame(canvas: HTMLCanvasElement, overlay: HTMLElement)
 
   const store = new GameStore();
   const input = new InputManager(canvas);
+  const latch = new InputLatch();
   const audio = new AudioBus();
   const ui = new UiRoot(overlay, assetManifest);
   const app: AppContext = {
@@ -52,15 +54,25 @@ export async function startGame(canvas: HTMLCanvasElement, overlay: HTMLElement)
 
   engine.runRenderLoop(() => {
     const frame = input.poll();
-    loop.tick(engine.getDeltaTime() / 1000, (dt, fps) => {
-      scenes.update(dt, frame, fps);
-      ui.setScene(store.get().sceneId);
+    const wasPaused = store.get().paused;
+    scenes.beginFrame(frame);
+    if (store.get().paused) latch.clear();
+    else if (!wasPaused) latch.note(frame);
+
+    loop.tick(engine.getDeltaTime() / 1000, {
+      paused: store.get().paused,
+      fixedUpdate: (step, index) => {
+        scenes.fixedUpdate(step, latch.frameForStep(frame, index));
+      },
+      render: (alpha) => {
+        scenes.render(alpha, loop.framesPerSecond);
+        ui.setScene(store.get().sceneId);
+      },
     });
   });
 
-  const onResize = (): void => {
+  window.addEventListener("resize", () => {
     engine.resize();
-  };
-  window.addEventListener("resize", onResize);
+  });
   engine.resize();
 }

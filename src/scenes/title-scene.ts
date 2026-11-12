@@ -7,13 +7,15 @@ import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder";
 import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { Scene } from "@babylonjs/core/scene";
+import type { AppContext } from "../app/context";
 import type { InputFrame } from "../input/types";
-import type { AppContext } from "../core/runtime";
+import { MenuCursor } from "../ui/menu-nav";
 
 export class TitleScene {
   readonly id = "title" as const;
   private scene: Scene | null = null;
   private spin: Mesh | null = null;
+  private readonly menu = new MenuCursor();
 
   constructor(private readonly app: AppContext) {}
 
@@ -44,6 +46,7 @@ export class TitleScene {
     camera.setTarget(new Vector3(0, 0.9, 0));
 
     this.scene = scene;
+    this.menu.reset();
     this.app.ui.showTitle(
       () => {
         this.app.requestScene("playground");
@@ -56,9 +59,19 @@ export class TitleScene {
     this.app.audio.play("ui");
   }
 
-  update(dt: number, input: InputFrame): void {
-    if (this.spin) this.spin.rotation.y += dt * 0.35;
-    if (input.confirmPressed) this.app.requestScene("playground");
+  beginFrame(input: InputFrame): void {
+    if (input.confirmPressed) {
+      this.app.requestScene("playground");
+      return;
+    }
+    this.menu.update(input.move.y, input.jumpPressed, this.app.ui);
+  }
+
+  fixedUpdate(step: number): void {
+    if (this.spin) this.spin.rotation.y += step * 0.35;
+  }
+
+  render(): void {
     this.scene?.render();
   }
 

@@ -60,6 +60,16 @@ function magnitude(value: Vec2): number {
   return Math.hypot(value.x, value.y);
 }
 
+/** Standard-mapping D-pad. Used when the left stick is inside the deadzone. */
+function dpadMove(pad: PadSnapshot | null): Vec2 {
+  if (!pad) return { x: 0, y: 0 };
+  const right = pad.buttons[15] === true;
+  const left = pad.buttons[14] === true;
+  const up = pad.buttons[12] === true;
+  const down = pad.buttons[13] === true;
+  return { x: Number(right) - Number(left), y: Number(up) - Number(down) };
+}
+
 /** A fresh keydown should edge even if a missed keyup left the key looking held. */
 export function applyFreshKeyEdges(
   frame: InputFrame,
@@ -91,9 +101,10 @@ export function evaluateInput(
     x: axisFromKeys(snapshot.keys, bindings.camera.negativeX, bindings.camera.positiveX),
     y: axisFromKeys(snapshot.keys, bindings.camera.negativeY, bindings.camera.positiveY),
   };
-  const padMove = snapshot.pad
+  const stickMove = snapshot.pad
     ? readStick(snapshot.pad.axes, bindings.move.stick, bindings.deadzone)
     : { x: 0, y: 0 };
+  const padMove = magnitude(stickMove) > 0 ? stickMove : dpadMove(snapshot.pad);
   const padCamera = snapshot.pad
     ? readStick(snapshot.pad.axes, bindings.camera.stick, bindings.deadzone)
     : { x: 0, y: 0 };

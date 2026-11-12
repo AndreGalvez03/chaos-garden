@@ -79,6 +79,39 @@ describe("name check", () => {
     expect(findTerms(phrase.toUpperCase(), denylist.terms)).toContain(phrase);
     expect(findTerms(phrase.replace(" ", "x"), denylist.terms)).not.toContain(phrase);
   });
+
+  it("matches separator, joined, camel, and accented forms from the denylist", () => {
+    const singles = new Set(
+      denylist.terms.filter((entry) => !entry.includes(" ")).map((entry) => entry.toLowerCase()),
+    );
+    const phrase = denylist.terms.find((entry) => {
+      const words = entry.toLowerCase().split(/\s+/);
+      return words.length > 1 && words.every((word) => !singles.has(word));
+    });
+    expect(phrase).toBeTruthy();
+    if (!phrase) return;
+    const words = phrase.toLowerCase().split(/\s+/);
+    expect(findTerms(words.join("-"), denylist.terms)).toContain(phrase);
+    expect(findTerms(words.join("_"), denylist.terms)).toContain(phrase);
+    expect(findTerms(words.join("."), denylist.terms)).toContain(phrase);
+    expect(findTerms(words.join(""), denylist.terms)).toContain(phrase);
+    expect(findTerms(`${words[0]}. ${words.slice(1).join(" ")}`, denylist.terms)).toContain(phrase);
+    expect(
+      scanText(`assets/${words.join("-")}.glb`, "", denylist.terms).map((hit) => hit.term),
+    ).toContain(phrase);
+
+    const word = denylist.terms.find((entry) => !entry.includes(" ") && /[a-z]/.test(entry));
+    expect(word).toBeTruthy();
+    if (!word) return;
+    const head = word.charAt(0).toUpperCase() + word.slice(1);
+    expect(findTerms(`my${head}`, denylist.terms)).toContain(word);
+    expect(findTerms(`${head}Hero`, denylist.terms)).toContain(word);
+
+    const accents: Record<string, string> = { a: "á", e: "é", i: "í", o: "ó", u: "ú" };
+    const accented = word.replace(/[aeiou]/, (letter) => accents[letter] ?? letter);
+    expect(accented).not.toBe(word);
+    expect(findTerms(accented, denylist.terms)).toContain(word);
+  });
 });
 
 describe("bundle budget", () => {
