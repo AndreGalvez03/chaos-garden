@@ -26,10 +26,12 @@ import {
 import { createPlaceholderHero, type PlaceholderHero } from "../../src/player/hero";
 import { DEFAULT_TUNING } from "../../src/player/tuning";
 
-const wasm = readFileSync(
+const wasmFile = readFileSync(
   new URL("../../node_modules/@babylonjs/havok/lib/esm/HavokPhysics.wasm", import.meta.url),
 );
-const havok = await HavokPhysics({ wasmBinary: wasm });
+const wasmBinary = new ArrayBuffer(wasmFile.byteLength);
+new Uint8Array(wasmBinary).set(wasmFile);
+const havok = await HavokPhysics({ wasmBinary });
 const engine = new NullEngine();
 
 interface Ride {
