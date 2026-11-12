@@ -22,7 +22,7 @@ Use Babylon.js (`@babylonjs/core`) and the Havok plugin (`@babylonjs/havok`) as 
 
 - Rendering, cameras, materials, and physics share one scene graph. The yard can enable a physics plugin without a second integration layer.
 - Havok is distributed as WebAssembly. The bundle budget tracks that file separately from JavaScript. The dev server excludes the package from dependency pre-bundling so the WASM response is not replaced by an HTML fallback.
-- The simple motor in this milestone sets velocity directly. A later milestone can move to a character controller on the same plugin without changing the input frame or the scene manager.
+- The runner sets velocity from a pure state machine on each fixed step. Physics steps on that same clock, and a paused frame does not step.
 - Three.js is a strong renderer, but a physics-heavy character would still need another library and a glue layer. That is more moving parts for a static Pages deploy than this project wants in the foundation.
 - PlayCanvas is a capable engine. Its usual path is an editor project and an engine runtime. This repository is a code-first Vite app with unit tests and a `dist/` folder, and Babylon fits that shape more directly.
 - Both packages stay dependencies. `@babylonjs/core` is Apache-2.0. `@babylonjs/havok` is MIT. They are not art assets and are not listed in `assets/manifest.json`.

@@ -167,11 +167,49 @@ describe("evaluateInput", () => {
     expect(frame.move.x).toBeCloseTo(1, 5);
   });
 
+  it("opens tuning from the backquote key or both shoulder buttons", () => {
+    const fromKey = evaluateInput(
+      { keys: new Set(["Backquote"]), mouseX: 0, mouseY: 0, pad: null },
+      bindings,
+    );
+    expect(fromKey.frame.tunePressed).toBe(true);
+
+    const oneShoulder = Array.from({ length: 16 }, () => false);
+    oneShoulder[4] = true;
+    const single = evaluateInput(
+      {
+        keys: new Set(),
+        mouseX: 0,
+        mouseY: 0,
+        pad: { family: "xbox", buttons: oneShoulder, axes: [] },
+      },
+      bindings,
+    );
+    expect(single.frame.tunePressed).toBe(false);
+
+    const both = Array.from({ length: 16 }, () => false);
+    both[4] = true;
+    both[5] = true;
+    const chord = evaluateInput(
+      { keys: new Set(), mouseX: 0, mouseY: 0, pad: { family: "xbox", buttons: both, axes: [] } },
+      bindings,
+    );
+    expect(chord.frame.tunePressed).toBe(true);
+    const held = evaluateInput(
+      { keys: new Set(), mouseX: 0, mouseY: 0, pad: { family: "xbox", buttons: both, axes: [] } },
+      bindings,
+      chord.down,
+      chord.device,
+    );
+    expect(held.frame.tune).toBe(true);
+    expect(held.frame.tunePressed).toBe(false);
+  });
+
   it("treats a fresh keydown as a pause edge even if the key already looked held", () => {
     const held = evaluateInput(
       { keys: new Set(["Escape"]), mouseX: 0, mouseY: 0, pad: null },
       bindings,
-      { jump: false, attack: false, action: false, pause: true, confirm: false },
+      { jump: false, attack: false, action: false, pause: true, confirm: false, tune: false },
     );
     expect(held.frame.pausePressed).toBe(false);
     const recovered = applyFreshKeyEdges(held.frame, new Set(["Escape"]), bindings);

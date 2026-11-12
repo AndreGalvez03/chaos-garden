@@ -29,6 +29,7 @@ const IDLE_DOWN: DigitalDown = {
   action: false,
   pause: false,
   confirm: false,
+  tune: false,
 };
 
 function axisFromKeys(
@@ -54,6 +55,12 @@ function keyHeld(keys: ReadonlySet<string>, codes: readonly string[]): boolean {
 function buttonHeld(pad: PadSnapshot | null, buttons: readonly number[]): boolean {
   if (!pad) return false;
   return buttons.some((index) => pad.buttons[index] === true);
+}
+
+/** Every listed button is down. An empty list is not a chord. */
+function chordHeld(pad: PadSnapshot | null, buttons: readonly number[]): boolean {
+  if (!pad || buttons.length === 0) return false;
+  return buttons.every((index) => pad.buttons[index] === true);
 }
 
 function magnitude(value: Vec2): number {
@@ -84,6 +91,7 @@ export function applyFreshKeyEdges(
     actionPressed: frame.actionPressed || fresh(bindings.action.keys),
     pausePressed: frame.pausePressed || fresh(bindings.pause.keys),
     confirmPressed: frame.confirmPressed || fresh(bindings.confirm.keys),
+    tunePressed: frame.tunePressed || fresh(bindings.tune.keys),
   };
 }
 
@@ -114,7 +122,8 @@ export function evaluateInput(
     keyHeld(snapshot.keys, bindings.attack.keys) ||
     keyHeld(snapshot.keys, bindings.action.keys) ||
     keyHeld(snapshot.keys, bindings.pause.keys) ||
-    keyHeld(snapshot.keys, bindings.confirm.keys);
+    keyHeld(snapshot.keys, bindings.confirm.keys) ||
+    keyHeld(snapshot.keys, bindings.tune.keys);
   const keyActive =
     keyMove.x !== 0 ||
     keyMove.y !== 0 ||
@@ -129,7 +138,8 @@ export function evaluateInput(
     buttonHeld(snapshot.pad, bindings.attack.buttons) ||
     buttonHeld(snapshot.pad, bindings.action.buttons) ||
     buttonHeld(snapshot.pad, bindings.pause.buttons) ||
-    buttonHeld(snapshot.pad, bindings.confirm.buttons);
+    buttonHeld(snapshot.pad, bindings.confirm.buttons) ||
+    chordHeld(snapshot.pad, bindings.tune.buttons);
   const padActive =
     snapshot.pad !== null &&
     (padMove.x !== 0 || padMove.y !== 0 || padCamera.x !== 0 || padCamera.y !== 0 || padDigital);
@@ -159,6 +169,8 @@ export function evaluateInput(
     confirm:
       keyHeld(snapshot.keys, bindings.confirm.keys) ||
       buttonHeld(snapshot.pad, bindings.confirm.buttons),
+    tune:
+      keyHeld(snapshot.keys, bindings.tune.keys) || chordHeld(snapshot.pad, bindings.tune.buttons),
   };
 
   const frame: InputFrame = {
@@ -176,6 +188,8 @@ export function evaluateInput(
     actionPressed: down.action && !previous.action,
     pausePressed: down.pause && !previous.pause,
     confirmPressed: down.confirm && !previous.confirm,
+    tune: down.tune,
+    tunePressed: down.tune && !previous.tune,
     device,
   };
 

@@ -22,6 +22,9 @@ export interface InputFrame {
   actionPressed: boolean;
   pausePressed: boolean;
   confirmPressed: boolean;
+  /** Debug tuning overlay. Not part of the play HUD. */
+  tune: boolean;
+  tunePressed: boolean;
   device: DeviceKind;
 }
 
@@ -31,6 +34,7 @@ export interface DigitalDown {
   action: boolean;
   pause: boolean;
   confirm: boolean;
+  tune: boolean;
 }
 
 export function emptyInputFrame(device: DeviceKind = "keyboard"): InputFrame {
@@ -46,6 +50,8 @@ export function emptyInputFrame(device: DeviceKind = "keyboard"): InputFrame {
     actionPressed: false,
     pausePressed: false,
     confirmPressed: false,
+    tune: false,
+    tunePressed: false,
     device,
   };
 }

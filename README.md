@@ -2,7 +2,7 @@
 
 Chaos Garden is a browser 3D action-platformer with a virtual-pet garden. You run through momentum-based levels, bring collectibles home, and raise pets in one of three gardens: light, neutral, or dark. The name is a placeholder and lives in one place, `GAME_TITLE` in `src/config.ts`.
 
-This repository is milestone M0: the toolchain, the scene flow, and a gray-box yard. Nothing is saved. Game state lives in memory and disappears on refresh.
+This repository is milestone M1: the toolchain, the scene flow, and a tuned runner on a gray-box course. Nothing is saved. Game state lives in memory and disappears on refresh.
 
 The dev server and the production build both use the `/chaos-garden/` base path, matching GitHub Pages at <https://andregalvez03.github.io/chaos-garden/>.
 
@@ -30,17 +30,19 @@ npm run preview
 | ------ | ------------------------------------------------ | --------------------------- |
 | Move   | W A S D                                          | Left stick                  |
 | Camera | Arrow keys, or the mouse after clicking the view | Right stick                 |
-| Jump   | Space                                            | South button (A / Cross)    |
-| Attack | K                                                | West button (X / Square)    |
-| Action | F                                                | North button (Y / Triangle) |
+| Jump   | Space (hold for a higher jump)                   | South button (A / Cross)    |
+| Roll   | K (hold to charge, release to burst)             | West button (X / Square)    |
+| Dash   | F (in the air, toward a beacon in front)         | North button (Y / Triangle) |
 | Pause  | Esc                                              | Menu / Options              |
 | Begin  | Enter                                            | Menu / Options              |
 
 Sticks use a radial deadzone. Bindings can be replaced through the input module, and the pause menu lists the active map. Xbox and PlayStation pads that report the standard gamepad mapping are labeled automatically. Other pads keep generic names and the same standard indexes when the browser says the mapping is standard.
 
-On the pause menu and the credits screen, the left stick or D-pad moves between buttons and the south button activates the focused one. Esc and the menu button always go back. Tab still moves focus. The yard pauses if the window blurs, the tab is hidden, or the pointer lock ends. Simulation steps are fixed, so a pause leaves the runner where it is.
+On the pause menu and the credits screen, the left stick or D-pad moves between buttons and the south button activates the focused one. Esc and the menu button always go back. Tab still moves focus. The course pauses if the window blurs, the tab is hidden, or the pointer lock ends. Simulation steps are fixed, so a pause leaves the runner where it is.
 
-Attack and Action are wired in the yard as a small visual pulse and a short HUD note. The tuned movement set comes later.
+The yard continues into a terrace course: a long straight, a slope, a lifted loop, a rail, two springs, and floating beacons. Run off a ledge or jump, then press Dash to snap toward the nearest beacon in front of you. With no beacon in that cone, the dash goes forward. Hold Roll and release it to burst. Stay fast on the loop and the runner sticks to the surface. Slow down on the steep part and you drop off. Step onto a spring to launch. Touch the rail while moving and you grind it; steer left or right to keep your balance, and jump to leave it.
+
+The tuning overlay is hidden and is not listed in the pause menu. Press the backquote key, or hold both shoulder buttons (LB + RB / L1 + R1), to open it. Sliders edit the live numbers, and Reset to defaults restores them. Nothing is saved.
 
 ## Scripts
 
@@ -56,7 +58,7 @@ Attack and Action are wired in the yard as a small visual pulse and a short HUD 
 ## Milestones
 
 - **M0 Foundations.** Tooling, input, scene manager, in-memory state, gray-box yard, licensing checks, continuous integration, and the Pages workflow.
-- **M1 Movement.** A tuned controller: burst dash, lock-on strike, grind rails, springs, and loops.
+- **M1 Movement.** A tuned controller: roll burst, lock-on dash, grind rails, springs, and loops, plus a high-speed camera and a hidden tuning overlay.
 - **M2 Journey.** A world map, several levels, and collectibles (fruit, small animals, and power orbs) that come back with you.
 - **M3 Garden.** Three garden variants. Pets grow from egg to child to adult and lean light, neutral, or dark based on care and the items they receive.
 - **M4 Release.** Audio, presentation, and the public GitHub Pages release.

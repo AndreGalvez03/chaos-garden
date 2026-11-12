@@ -10,10 +10,12 @@ import { GameLoop } from "../core/loop";
 import { SceneManager } from "../core/scene-manager";
 import { InputLatch } from "../input/latch";
 import { InputManager } from "../input/input-manager";
+import { cloneTuning } from "../player/tuning";
 import { CreditsScene } from "../scenes/credits-scene";
 import { PlaygroundScene } from "../scenes/playground-scene";
 import { TitleScene } from "../scenes/title-scene";
 import { UiRoot } from "../ui/overlay";
+import { TuningOverlay } from "../ui/tuning-overlay";
 import type { AppContext } from "./context";
 
 export async function startGame(canvas: HTMLCanvasElement, overlay: HTMLElement): Promise<void> {
@@ -29,7 +31,11 @@ export async function startGame(canvas: HTMLCanvasElement, overlay: HTMLElement)
   const input = new InputManager(canvas);
   const latch = new InputLatch();
   const audio = new AudioBus();
+  const tuningRoot = document.querySelector<HTMLElement>("#tuning");
+  if (!tuningRoot) throw new Error("The tuning overlay is missing from the page.");
+  const tuning = cloneTuning();
   const ui = new UiRoot(overlay, assetManifest);
+  const tuningUi = new TuningOverlay(tuningRoot, tuning);
   const app: AppContext = {
     engine,
     havok,
@@ -37,6 +43,8 @@ export async function startGame(canvas: HTMLCanvasElement, overlay: HTMLElement)
     input,
     audio,
     ui,
+    tuning,
+    tuningUi,
     requestScene: () => {},
   };
   const scenes = new SceneManager(store, {

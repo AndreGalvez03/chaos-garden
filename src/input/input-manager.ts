@@ -27,6 +27,7 @@ export class InputManager {
     action: false,
     pause: false,
     confirm: false,
+    tune: false,
   };
   private device: DeviceKind = "keyboard";
   private preferredPad: number | null = null;

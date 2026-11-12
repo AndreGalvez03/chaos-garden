@@ -31,9 +31,11 @@ export interface Bindings {
   action: DigitalBinding;
   pause: DigitalBinding;
   confirm: DigitalBinding;
+  /** Chord: every listed button must be down together. */
+  tune: DigitalBinding;
 }
 
-export type DigitalAction = "jump" | "attack" | "action" | "pause" | "confirm";
+export type DigitalAction = "jump" | "attack" | "action" | "pause" | "confirm" | "tune";
 
 export function createDefaultBindings(): Bindings {
   return {
@@ -57,6 +59,7 @@ export function createDefaultBindings(): Bindings {
     action: { keys: ["KeyF"], buttons: [3] },
     pause: { keys: ["Escape"], buttons: [9] },
     confirm: { keys: ["Enter", "NumpadEnter"], buttons: [9] },
+    tune: { keys: ["Backquote"], buttons: [4, 5] },
   };
 }
 

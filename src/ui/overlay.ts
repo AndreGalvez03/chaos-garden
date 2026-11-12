@@ -10,6 +10,7 @@ export interface PlayHudState {
   deviceLabel: string;
   fps: number;
   hint: string;
+  status: string;
   controls: ControlSection[];
   onResume: () => void;
   onCredits: () => void;
@@ -22,8 +23,10 @@ export class UiRoot implements MenuSurface {
   private deviceNode: HTMLElement | null = null;
   private fpsNode: HTMLElement | null = null;
   private hintNode: HTMLElement | null = null;
+  private statusNode: HTMLElement | null = null;
   private shownDevice = "";
   private shownHint = "";
+  private shownStatus = "";
   private shownFps = -1;
   private lastFpsWrite = 0;
 
@@ -48,7 +51,7 @@ export class UiRoot implements MenuSurface {
 
     const lede = document.createElement("p");
     lede.className = "lede";
-    lede.textContent = "Run and jump through a gray-box yard. Pets and gardens come later.";
+    lede.textContent = "Run the terrace course. Pets and gardens come later.";
 
     const gardens = document.createElement("p");
     gardens.className = "gardens";
@@ -121,6 +124,7 @@ export class UiRoot implements MenuSurface {
       this.pauseOpen = false;
       this.shownDevice = "";
       this.shownHint = "";
+      this.shownStatus = "";
       this.shownFps = -1;
       this.mountHud();
     }
@@ -143,6 +147,10 @@ export class UiRoot implements MenuSurface {
       this.hintNode.textContent = state.hint;
       this.hintNode.hidden = state.hint.length === 0;
       this.shownHint = state.hint;
+    }
+    if (this.statusNode && state.status !== this.shownStatus) {
+      this.statusNode.textContent = state.status;
+      this.shownStatus = state.status;
     }
     if (state.paused && this.pauseOpen && state.deviceLabel !== this.pauseDevice) {
       this.clearPause();
@@ -175,12 +183,14 @@ export class UiRoot implements MenuSurface {
     hud.className = "hud";
     const place = document.createElement("p");
     place.className = "hud-place";
-    place.textContent = "Graybox yard";
+    place.textContent = "Terrace course";
     this.deviceNode = document.createElement("p");
+    this.statusNode = document.createElement("p");
+    this.statusNode.className = "hud-status";
     this.fpsNode = document.createElement("p");
     this.hintNode = document.createElement("p");
     this.hintNode.className = "hud-hint";
-    hud.append(place, this.deviceNode, this.fpsNode, this.hintNode);
+    hud.append(place, this.statusNode, this.deviceNode, this.fpsNode, this.hintNode);
     this.root.append(hud);
   }
 

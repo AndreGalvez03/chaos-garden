@@ -15,6 +15,13 @@ export default {
       from: { path: "^src/core" },
       to: { path: "^src/(scenes|ui)" },
     },
+    {
+      name: "movement-math-stays-pure",
+      severity: "error",
+      comment: "The movement controller, camera math, and tuning do not touch the scene graph.",
+      from: { path: "^src/player/(controller|camera|tuning)\\.ts$" },
+      to: { path: "(^node_modules/@babylonjs|^src/(scenes|ui|app|levels))" },
+    },
   ],
   options: {
     doNotFollow: { path: "node_modules" },

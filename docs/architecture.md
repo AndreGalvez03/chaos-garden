@@ -11,8 +11,8 @@ The title string lives only in `GAME_TITLE` inside `src/config.ts`.
 | `src/app`     | Wires the engine, input, scenes, and overlay together                                    |
 | `src/core`    | Fixed-step game loop, scene manager, and in-memory store                                 |
 | `src/input`   | Keyboard and Gamepad API mapped to named actions, with deadzones and remappable bindings |
-| `src/player`  | Placeholder hero mesh and the simple run-and-jump motor                                  |
-| `src/levels`  | Gray-box yard geometry                                                                   |
+| `src/player`  | Pure movement state machine, tuning values, follow camera, and the sprout hero           |
+| `src/levels`  | Gray-box yard plus the terrace course: straight, slope, loop, rail, springs, beacons     |
 | `src/pets`    | Pure TypeScript growth and temperament rules. This folder imports only itself            |
 | `src/garden`  | Names of the light, neutral, and dark gardens                                            |
 | `src/ui`      | HTML overlay: title, HUD, pause menu, credits                                            |
@@ -35,12 +35,14 @@ flowchart LR
   scenes --> title[Title]
   scenes --> yard[Graybox yard]
   scenes --> credits[Credits]
-  yard --> motor[Simple motor]
+  yard --> motor[Movement controller]
   motor --> physics[Havok]
   scenes --> overlay[HTML overlay]
 ```
 
-The yard scene is the only one that turns on physics. It builds static boxes, drops the placeholder hero in, and sets linear velocity from the motor on each fixed step. The follow camera is placed after that step, on the blended pose. The real momentum controller replaces this motor later; the input frame stays the same. `src/core` does not import scenes or the overlay. `src/app` is the only place that connects them.
+The yard scene is the only one that turns on physics. It builds the gray-box yard and the terrace course, drops the sprout hero in, and steps a pure controller once per fixed step. The controller takes named actions plus ground, rail, and beacon samples and returns a velocity, an optional rail snap, and a gravity scale. It does not import the scene graph. The follow camera is placed after that physics step: it widens and pulls back with speed, eases its up vector through the loop and the rail, and shortens itself when a ray hits a wall. `src/core` does not import scenes or the overlay. `src/app` is the only place that connects them.
+
+Tuning numbers live in `src/player/tuning.ts`. A hidden overlay edits a memory copy of that object. It is not part of the pause menu and it is not stored.
 
 The overlay reads the active scene, the device label, and the frame rate. The pause menu reads the current binding table, so a remapped key shows up without a second list. The credits screen and `CREDITS.md` both come from `assets/manifest.json`.
 

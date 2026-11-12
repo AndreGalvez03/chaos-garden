@@ -1,0 +1,410 @@
+import { describe, expect, it } from "vitest";
+import { add, scale, type Vec3 } from "../../src/core/math";
+import { buildSpline, closestOnSpline } from "../../src/core/spline";
+import { FIXED_STEP_SECONDS } from "../../src/core/loop";
+import {
+  createControllerState,
+  stepController,
+  type ControllerState,
+  type GroundQuery,
+  type PlayerActions,
+} from "../../src/player/controller";
+import { DEFAULT_TUNING, type PlayerTuning } from "../../src/player/tuning";
+
+const DT = FIXED_STEP_SECONDS;
+const tuning = DEFAULT_TUNING;
+
+interface Body {
+  state: ControllerState;
+  position: Vec3;
+  velocity: Vec3;
+  gravityFactor: number;
+}
+
+function body(patch: Partial<Body> = {}): Body {
+  return {
+    state: patch.state ?? createControllerState(),
+    position: patch.position ?? { x: 0, y: 0, z: 0 },
+    velocity: patch.velocity ?? { x: 0, y: 0, z: 0 },
+    gravityFactor: patch.gravityFactor ?? 0,
+  };
+}
+
+function actions(patch: Partial<PlayerActions> = {}): PlayerActions {
+  return {
+    wish: { x: 0, y: 0, z: 0 },
+    balance: 0,
+    throttle: 0,
+    jumpHeld: false,
+    jumpPressed: false,
+    rollHeld: false,
+    dashPressed: false,
+    ...patch,
+  };
+}
+
+function ground(patch: Partial<GroundQuery> = {}): GroundQuery {
+  return {
+    hit: true,
+    normal: { x: 0, y: 1, z: 0 },
+    surface: "ground",
+    springDirection: null,
+    ...patch,
+  };
+}
+
+function step(
+  current: Body,
+  nextActions: PlayerActions,
+  nextGround: GroundQuery,
+  options: {
+    rail?: ReturnType<typeof closestOnSpline> | null;
+    targets?: readonly Vec3[];
+    rules?: PlayerTuning;
+  } = {},
+): Body {
+  const rules = options.rules ?? tuning;
+  const output = stepController({
+    state: current.state,
+    position: current.position,
+    velocity: current.velocity,
+    actions: nextActions,
+    ground: nextGround,
+    rail: options.rail ?? null,
+    targets: options.targets ?? [],
+    dt: DT,
+    tuning: rules,
+  });
+  const velocity = add(
+    output.velocity,
+    scale({ x: 0, y: -rules.gravity, z: 0 }, output.gravityFactor * DT),
+  );
+  const anchored = output.snap ?? current.position;
+  return {
+    state: output.state,
+    velocity,
+    position: add(anchored, scale(velocity, DT)),
+    gravityFactor: output.gravityFactor,
+  };
+}
+
+function planarSpeed(velocity: Vec3): number {
+  return Math.hypot(velocity.x, velocity.z);
+}
+
+function surfaceSpeed(velocity: Vec3, normal: Vec3): number {
+  const n = unit(normal.x, normal.y, normal.z);
+  const into = velocity.x * n.x + velocity.y * n.y + velocity.z * n.z;
+  return Math.hypot(velocity.x - n.x * into, velocity.y - n.y * into, velocity.z - n.z * into);
+}
+
+describe("controller states", () => {
+  it("stays idle without input", () => {
+    const next = step(body(), actions(), ground());
+    expect(next.state.mode).toBe("idle");
+    expect(planarSpeed(next.velocity)).toBeLessThan(tuning.idleSpeed);
+  });
+
+  it("runs when the stick is pushed", () => {
+    const next = step(body(), actions({ wish: { x: 0, y: 0, z: 1 } }), ground());
+    expect(next.state.mode).toBe("run");
+    expect(next.velocity.z).toBeGreaterThan(0);
+  });
+
+  it("accelerates harder early in a run than near top speed", () => {
+    let runner = body();
+    const forward = actions({ wish: { x: 0, y: 0, z: 1 } });
+    const samples: number[] = [];
+    for (let frame = 0; frame < 50; frame += 1) {
+      runner = step(runner, forward, ground());
+      samples.push(planarSpeed(runner.velocity));
+    }
+    const early = samples[12]! - samples[0]!;
+    const later = samples[36]! - samples[24]!;
+    expect(early).toBeGreaterThan(later);
+    expect(samples[49]!).toBeGreaterThan(tuning.topSpeed * 0.45);
+    expect(samples[49]!).toBeLessThanOrEqual(tuning.topSpeed + 0.05);
+  });
+
+  it("lets a downhill slope outrun flat ground and an uphill slow it down", () => {
+    const forward = actions({ wish: { x: 0, y: 0, z: 1 } });
+    const flatGround = ground();
+    const downGround = ground({ normal: unit(0, Math.cos(0.5), Math.sin(0.5)) });
+    const upGround = ground({ normal: unit(0, Math.cos(0.5), -Math.sin(0.5)) });
+    const flat = runFor(24, forward, flatGround);
+    const down = runFor(24, forward, downGround);
+    const up = runFor(24, forward, upGround);
+    expect(surfaceSpeed(up.velocity, upGround.normal)).toBeLessThan(
+      surfaceSpeed(flat.velocity, flatGround.normal),
+    );
+    expect(surfaceSpeed(flat.velocity, flatGround.normal)).toBeLessThan(
+      surfaceSpeed(down.velocity, downGround.normal),
+    );
+  });
+
+  it("jumps from the ground and then falls once the upward speed is spent", () => {
+    let runner = body();
+    let sawJump = false;
+    let peak = 0;
+    for (let frame = 0; frame < 160; frame += 1) {
+      const held = frame < 20;
+      runner = step(
+        runner,
+        actions({ jumpPressed: frame === 0, jumpHeld: held }),
+        ground({ hit: frame === 0 }),
+      );
+      if (runner.state.mode === "jump") sawJump = true;
+      peak = Math.max(peak, runner.position.y);
+      if (sawJump && runner.state.mode === "fall") break;
+    }
+    expect(sawJump).toBe(true);
+    expect(runner.state.mode).toBe("fall");
+    expect(peak).toBeGreaterThan(0.4);
+  });
+
+  it("reaches a higher peak when the jump is held", () => {
+    expect(peakJump(30)).toBeGreaterThan(peakJump(1) + 0.35);
+  });
+
+  it("lands in a run with the stick held and in idle without it", () => {
+    const falling = body({
+      state: { ...createControllerState(), mode: "fall", jumpTime: 1 },
+      velocity: { x: 0, y: -4, z: 6 },
+    });
+    const running = step(falling, actions({ wish: { x: 0, y: 0, z: 1 } }), ground());
+    const standing = step(
+      body({
+        state: { ...createControllerState(), mode: "fall", jumpTime: 1 },
+        velocity: { x: 0, y: -4, z: 0 },
+      }),
+      actions(),
+      ground(),
+    );
+    expect(running.state.mode).toBe("run");
+    expect(standing.state.mode).toBe("idle");
+    expect(running.state.dashSpent).toBe(false);
+  });
+
+  it("still jumps during coyote time and not after it expires", () => {
+    let runner = step(body(), actions(), ground());
+    runner = step(runner, actions({ jumpPressed: true, jumpHeld: true }), ground({ hit: false }));
+    expect(runner.state.mode).toBe("jump");
+    expect(runner.velocity.y).toBeGreaterThan(0);
+
+    let late = step(body(), actions(), ground());
+    for (let frame = 0; frame < 12; frame += 1) {
+      late = step(late, actions(), ground({ hit: false }));
+    }
+    late = step(late, actions({ jumpPressed: true, jumpHeld: true }), ground({ hit: false }));
+    expect(late.state.mode).not.toBe("jump");
+  });
+
+  it("does not jump from the air when there is no coyote time", () => {
+    const airborne = step(
+      body({ state: { ...createControllerState(), mode: "fall" } }),
+      actions({ jumpPressed: true, jumpHeld: true }),
+      ground({ hit: false }),
+    );
+    expect(airborne.state.mode).not.toBe("jump");
+  });
+
+  it("builds roll charge while the button is held", () => {
+    let runner = body();
+    const held = actions({ rollHeld: true });
+    for (let frame = 0; frame < 20; frame += 1) runner = step(runner, held, ground());
+    expect(runner.state.mode).toBe("rollCharge");
+    expect(runner.state.rollCharge).toBeGreaterThan(0.4);
+    expect(runner.state.rollCharge).toBeLessThanOrEqual(1);
+  });
+
+  it("bursts faster from a full charge than from a short one", () => {
+    const full = releaseCharge(40);
+    const short = releaseCharge(2);
+    expect(full.state.mode).toBe("rollBurst");
+    expect(short.state.mode).toBe("rollBurst");
+    expect(planarSpeed(full.velocity)).toBeGreaterThan(planarSpeed(short.velocity) + 8);
+    expect(planarSpeed(full.velocity)).toBeGreaterThan(tuning.rollBurstMax - 1);
+  });
+
+  it("returns to a run when the burst ends on the ground", () => {
+    let runner = releaseCharge(10);
+    const forward = actions({ wish: { x: 0, y: 0, z: 1 } });
+    for (let frame = 0; frame < 40; frame += 1) runner = step(runner, forward, ground());
+    expect(runner.state.mode).toBe("run");
+  });
+
+  it("dashes toward the nearest target inside the cone", () => {
+    const runner = dashAt([
+      { x: 3, y: 1, z: 8 },
+      { x: 0, y: 1, z: 16 },
+    ]);
+    expect(runner.state.mode).toBe("lockOnDash");
+    expect(runner.velocity.x).toBeGreaterThan(0);
+    expect(runner.velocity.z).toBeGreaterThan(0);
+    expect(runner.state.dashSpent).toBe(true);
+  });
+
+  it("dashes forward when no target sits in the cone", () => {
+    const runner = dashAt([{ x: 0, y: 1, z: -8 }]);
+    expect(runner.state.mode).toBe("lockOnDash");
+    expect(runner.velocity.z).toBeGreaterThan(0);
+    expect(Math.abs(runner.velocity.x)).toBeLessThan(1);
+  });
+
+  it("refuses a second air dash until the runner lands", () => {
+    let runner = dashAt([{ x: 0, y: 1, z: 8 }]);
+    for (let frame = 0; frame < 20; frame += 1) {
+      runner = step(runner, actions(), ground({ hit: false }), {
+        targets: [{ x: 8, y: 1, z: 2 }],
+      });
+    }
+    expect(runner.state.mode).not.toBe("lockOnDash");
+    const blocked = step(runner, actions({ dashPressed: true }), ground({ hit: false }), {
+      targets: [{ x: 8, y: 1, z: 2 }],
+    });
+    expect(blocked.state.mode).not.toBe("lockOnDash");
+    expect(blocked.velocity.x).toBeLessThan(4);
+
+    let landed = step(blocked, actions(), ground());
+    landed = step(landed, actions(), ground({ hit: false }));
+    const again = step(landed, actions({ dashPressed: true }), ground({ hit: false }), {
+      targets: [{ x: 0, y: 1, z: 8 }],
+    });
+    expect(again.state.mode).toBe("lockOnDash");
+  });
+
+  it("grinds along a rail, falls when balance is lost, and jumps off", () => {
+    const spline = buildSpline(
+      [
+        { x: 0, y: 1, z: 0 },
+        { x: 0, y: 1, z: 10 },
+        { x: 0, y: 1, z: 20 },
+        { x: 0, y: 1, z: 240 },
+      ],
+      4,
+    );
+    let runner = body({
+      position: { x: 0.2, y: 1.2, z: 2 },
+      velocity: { x: 0, y: 0, z: 12 },
+      state: { ...createControllerState(), mode: "fall" },
+    });
+    runner = step(runner, actions(), ground({ hit: false }), {
+      rail: closestOnSpline(spline, runner.position),
+    });
+    expect(runner.state.mode).toBe("railGrind");
+    const startZ = runner.position.z;
+    for (let frame = 0; frame < 20; frame += 1) {
+      runner = step(runner, actions(), ground({ hit: false }), {
+        rail: closestOnSpline(spline, runner.position),
+      });
+    }
+    expect(runner.state.mode).toBe("railGrind");
+    expect(runner.position.z).toBeGreaterThan(startZ + 1);
+    expect(Math.abs(runner.position.x)).toBeLessThan(0.5);
+
+    let unbalanced = runner;
+    for (let frame = 0; frame < 80 && unbalanced.state.mode === "railGrind"; frame += 1) {
+      unbalanced = step(unbalanced, actions({ balance: 1 }), ground({ hit: false }), {
+        rail: closestOnSpline(spline, unbalanced.position),
+      });
+    }
+    expect(unbalanced.state.mode).toBe("fall");
+
+    const hopped = step(runner, actions({ jumpPressed: true }), ground({ hit: false }), {
+      rail: closestOnSpline(spline, runner.position),
+    });
+    expect(hopped.state.mode).toBe("jump");
+    expect(hopped.velocity.y).toBeGreaterThan(tuning.railJumpSpeed - 1);
+    const stillAirborne = step(hopped, actions(), ground({ hit: false }), {
+      rail: closestOnSpline(spline, hopped.position),
+    });
+    expect(stillAirborne.state.mode).not.toBe("railGrind");
+  });
+
+  it("launches along a spring direction", () => {
+    const launched = step(
+      body(),
+      actions(),
+      ground({ surface: "spring", springDirection: { x: 0, y: 1, z: 0 } }),
+    );
+    expect(launched.state.mode).toBe("springLaunch");
+    expect(launched.velocity.y).toBeGreaterThan(tuning.springPower - 1);
+  });
+
+  it("glues a fast runner to a curved surface and lets a slow one fall", () => {
+    const ceiling = ground({ surface: "loop", normal: { x: 0, y: -1, z: 0 } });
+    const fast = step(
+      body({
+        velocity: { x: 0, y: 0, z: -30 },
+        state: { ...createControllerState(), mode: "run" },
+      }),
+      actions(),
+      ceiling,
+    );
+    expect(fast.state.mode).toBe("loopRun");
+    expect(fast.gravityFactor).toBe(0);
+    expect(fast.velocity.y).toBeGreaterThan(0);
+
+    const slow = step(
+      body({ velocity: { x: 0, y: 0, z: -4 }, state: { ...createControllerState(), mode: "run" } }),
+      actions(),
+      ceiling,
+    );
+    expect(slow.state.mode).toBe("fall");
+    expect(slow.gravityFactor).toBeGreaterThan(0);
+  });
+
+  it("jumps off a curved surface along its normal", () => {
+    const entered = step(
+      body({ velocity: { x: 0, y: 0, z: 30 } }),
+      actions(),
+      ground({ surface: "loop" }),
+    );
+    expect(entered.state.mode).toBe("loopRun");
+    const hopped = step(entered, actions({ jumpPressed: true }), ground({ surface: "loop" }));
+    expect(hopped.state.mode).toBe("jump");
+    expect(hopped.velocity.y).toBeGreaterThan(tuning.jumpSpeed - 1);
+  });
+});
+
+function runFor(frames: number, nextActions: PlayerActions, nextGround: GroundQuery): Body {
+  let runner = body();
+  for (let frame = 0; frame < frames; frame += 1) runner = step(runner, nextActions, nextGround);
+  return runner;
+}
+
+function peakJump(holdFrames: number): number {
+  let runner = body();
+  let peak = 0;
+  for (let frame = 0; frame < 180; frame += 1) {
+    runner = step(
+      runner,
+      actions({ jumpPressed: frame === 0, jumpHeld: frame < holdFrames }),
+      ground({ hit: frame === 0 }),
+    );
+    peak = Math.max(peak, runner.position.y);
+  }
+  return peak;
+}
+
+function releaseCharge(holdFrames: number): Body {
+  let runner = body();
+  for (let frame = 0; frame < holdFrames; frame += 1) {
+    runner = step(runner, actions({ rollHeld: true }), ground());
+  }
+  return step(runner, actions({ rollHeld: false, wish: { x: 0, y: 0, z: 1 } }), ground());
+}
+
+function dashAt(targets: readonly Vec3[]): Body {
+  const falling = body({
+    state: { ...createControllerState(), mode: "fall", facing: { x: 0, y: 0, z: 1 } },
+    position: { x: 0, y: 1, z: 0 },
+    velocity: { x: 0, y: 1, z: 4 },
+  });
+  return step(falling, actions({ dashPressed: true }), ground({ hit: false }), { targets });
+}
+
+function unit(x: number, y: number, z: number): Vec3 {
+  const size = Math.hypot(x, y, z);
+  return { x: x / size, y: y / size, z: z / size };
+}

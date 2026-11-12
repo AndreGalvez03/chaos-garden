@@ -23,6 +23,22 @@ test("title screen enters the yard without console errors", async ({ page }) => 
     .toBe(true);
   await expect(page.getByText("Keyboard")).toBeVisible();
   await expect(page.getByText(/FPS/)).toBeVisible();
+  await expect(canvas).toHaveAttribute("data-course", "terrace");
+  const startZ = Number(await canvas.getAttribute("data-runner-z"));
+  expect(Number.isFinite(startZ)).toBe(true);
+
+  await page.keyboard.down("KeyW");
+  await page.waitForTimeout(2500);
+  const endZ = Number(await canvas.getAttribute("data-runner-z"));
+  await page.keyboard.up("KeyW");
+  expect(endZ).toBeGreaterThan(startZ + 3);
+
+  await expect(page.locator("#tuning")).toBeHidden();
+  await page.keyboard.press("Backquote");
+  await expect(page.locator("#tuning")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reset to defaults" })).toBeVisible();
+  await page.keyboard.press("Backquote");
+  await expect(page.locator("#tuning")).toBeHidden();
 
   await page.keyboard.down("w");
   await page.keyboard.down("Space");
