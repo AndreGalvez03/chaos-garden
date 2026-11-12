@@ -1,0 +1,49 @@
+{
+  "name": "chaos-garden",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A browser 3D action-platformer with a virtual-pet garden.",
+  "license": "MIT",
+  "author": "André Gálvez",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:e2e": "npm run build && playwright test",
+    "credits": "tsx scripts/generate-credits.ts",
+    "check:assets": "tsx scripts/check-assets.ts",
+    "check:credits": "tsx scripts/check-credits.ts",
+    "check:names": "tsx scripts/check-names.ts",
+    "check:bundle": "tsx scripts/check-bundle.ts",
+    "check:boundaries": "depcruise src --config dependency-cruiser.config.mjs",
+    "check": "npm run check:assets && npm run check:credits && npm run check:names && npm run check:boundaries"
+  },
+  "dependencies": {
+    "@babylonjs/core": "9.36.0",
+    "@babylonjs/havok": "1.3.14"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.65.0",
+    "@types/node": "22.20.5",
+    "dependency-cruiser": "^18.7.2",
+    "eslint": "10.14.0",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "17.14.0",
+    "prettier": "3.10.1",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.2",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
+  }
+}

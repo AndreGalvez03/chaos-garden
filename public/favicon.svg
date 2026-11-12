@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Sprout">
+  <rect width="64" height="64" rx="14" fill="#1c2420" />
+  <circle cx="32" cy="42" r="7" fill="#e0a15a" />
+  <path d="M32 42C32 30 23 25 18 16C28 21 32 30 32 42Z" fill="#7d9a62" />
+  <path d="M32 42C32 28 42 22 49 14C40 23 36 32 32 42Z" fill="#d7e2c4" />
+</svg>
