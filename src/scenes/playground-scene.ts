@@ -1,35 +1,61 @@
 import { Color4 } from "@babylonjs/core/Maths/math.color";
-import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { FreeCamera } from "@babylonjs/core/Cameras/freeCamera";
 import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
-import type { PhysicsBody } from "@babylonjs/core/Physics/v2/physicsBody";
 import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin";
+import { PhysicsShapeSphere } from "@babylonjs/core/Physics/v2/physicsShape";
+import { ShapeCastResult } from "@babylonjs/core/Physics/shapeCastResult";
 import { Scene } from "@babylonjs/core/scene";
 import type { AppContext } from "../app/context";
+import type { Vec3 } from "../core/math";
 import { FIXED_STEP_SECONDS } from "../core/loop";
+import { sampleLoop } from "../core/loop-path";
+import { closestOnSpline } from "../core/spline";
 import { deviceLabel } from "../input/pad-profile";
 import type { DeviceKind, InputFrame } from "../input/types";
+import { buildCourse, type CourseContent } from "../levels/course";
+import { LOOP_COLLISION_BIT, readSurface } from "../levels/surface";
 import { buildYard, YARD_SPAWN } from "../levels/yard";
-import { createPlaceholderHero } from "../player/hero";
-import { cameraOffset, desiredVelocity, stepCamera, type CameraPose } from "../player/motor";
+import {
+  advanceCameraRig,
+  cameraClearanceLimit,
+  createCameraRig,
+  smoothCameraClearance,
+  type CameraRig,
+} from "../player/camera";
+import {
+  createControllerState,
+  FALL_RESET_Y,
+  isSafeGroundSample,
+  modeLabel,
+  respawnPoint,
+  SAFE_EDGE_MARGIN,
+  stepController,
+  wishFromStick,
+  type ControllerState,
+  type GroundQuery,
+} from "../player/controller";
+import { createPlaceholderHero, type PlaceholderHero } from "../player/hero";
 import { controlSections, familyForDevice, type ControlSection } from "../ui/control-list";
 import { MenuCursor } from "../ui/menu-nav";
-
-const GRAVITY = new Vector3(0, -18, 0);
 
 export class PlaygroundScene {
   readonly id = "playground" as const;
   private scene: Scene | null = null;
-  private hero: ReturnType<typeof createPlaceholderHero> | null = null;
+  private hero: PlaceholderHero | null = null;
   private camera: FreeCamera | null = null;
-  private pose: CameraPose = { yaw: 0, pitch: 0.42 };
+  private course: CourseContent | null = null;
+  private rig: CameraRig = createCameraRig();
+  private sim: ControllerState = createControllerState();
+  private supported = false;
   private hint = "";
   private hintTimer = 0;
-  private pulse = 0;
-  private steppedThisFrame = false;
+  private ready = false;
+  private disposed = false;
   private hadPointerLock = false;
   private lockLostThisFrame = false;
+  private ignoreLockLoss = false;
   private lastDevice: DeviceKind = "keyboard";
   private controlsDevice: DeviceKind | null = null;
   private controls: ControlSection[] = [];
@@ -41,10 +67,38 @@ export class PlaygroundScene {
   private readonly rayTo = new Vector3();
   private readonly velocity = new Vector3();
   private readonly zero = new Vector3(0, 0, 0);
+  private readonly gravity = new Vector3(0, -24, 0);
+  private readonly aim = new Quaternion();
+  private readonly visualAim = new Quaternion();
   private readonly camPos = new Vector3();
   private readonly camTarget = new Vector3();
+  private readonly camUp = new Vector3(0, 1, 0);
+  private readonly prevCam = new Vector3();
+  private readonly currCam = new Vector3();
+  private readonly prevLook = new Vector3();
+  private readonly currLook = new Vector3();
+  private readonly prevUp = new Vector3(0, 1, 0);
+  private readonly currUp = new Vector3(0, 1, 0);
+  private readonly bodyVelocity = new Vector3();
+  private readonly castRotation = Quaternion.Identity();
+  private readonly castStart = new ShapeCastResult();
+  private readonly castHit = new ShapeCastResult();
+  private prevFov = 0.9;
+  private currFov = 0.9;
+  private clearance = 6;
+  private cameraSphere: PhysicsShapeSphere | null = null;
+  private cameraSphereRadius = -1;
+  private readonly safePos = YARD_SPAWN.clone();
+  private readonly onResume = (): void => {
+    this.app.store.set({ paused: false });
+  };
+  private readonly onCredits = (): void => {
+    this.app.store.set({ creditsReturn: "playground", paused: false });
+    document.exitPointerLock();
+    this.app.requestScene("credits");
+  };
   private readonly onClick = (): void => {
-    if (this.app.store.get().paused) return;
+    if (this.app.store.get().paused || this.app.tuningUi.isVisible) return;
     void this.canvas()?.requestPointerLock();
   };
   private readonly onBlur = (): void => {
@@ -55,6 +109,11 @@ export class PlaygroundScene {
   };
   private readonly onPointerLock = (): void => {
     const locked = document.pointerLockElement === this.canvas();
+    if (this.ignoreLockLoss) {
+      this.ignoreLockLoss = false;
+      this.hadPointerLock = locked;
+      return;
+    }
     if (this.hadPointerLock && !locked) {
       this.lockLostThisFrame = true;
       this.pauseFromOutside();
@@ -64,7 +123,15 @@ export class PlaygroundScene {
 
   constructor(private readonly app: AppContext) {}
 
-  enter(): void {
+  enter(): Promise<void> {
+    this.disposed = false;
+    this.app.ui.showLoading();
+    return this.mount();
+  }
+
+  private async mount(): Promise<void> {
+    const havok = await this.app.havok;
+    if (this.disposed) return;
     const scene = new Scene(this.app.engine);
     scene.clearColor = new Color4(0.62, 0.68, 0.66, 1);
     const hemi = new HemisphericLight("yard-hemi", new Vector3(0.15, 1, 0.2), scene);
@@ -72,23 +139,31 @@ export class PlaygroundScene {
     const sun = new DirectionalLight("yard-sun", new Vector3(-0.4, -1, 0.25), scene);
     sun.intensity = 0.65;
 
-    const plugin = new HavokPlugin(false, this.app.havok);
-    scene.enablePhysics(GRAVITY, plugin);
-    // The game loop steps physics itself. Rendering must not advance it.
+    const plugin = new HavokPlugin(false, havok);
+    this.gravity.set(0, -this.app.tuning.gravity, 0);
+    scene.enablePhysics(this.gravity, plugin);
     scene.physicsEnabled = false;
     scene.getPhysicsEngine()?.setTimeStep(FIXED_STEP_SECONDS);
 
     buildYard(scene);
+    this.course = buildCourse(scene);
     this.hero = createPlaceholderHero(scene, YARD_SPAWN.clone());
+    this.sim = createControllerState();
     this.previousPos.copyFrom(this.hero.body.position);
     this.currentPos.copyFrom(this.hero.body.position);
+    this.rig = createCameraRig(0, 0.42);
     this.camera = new FreeCamera("follow", new Vector3(0, 3, -12), scene);
     this.camera.minZ = 0.05;
+    this.ensureCameraSphere(scene);
+    this.placeCamera(YARD_SPAWN);
     this.scene = scene;
-    this.pose = { yaw: 0, pitch: 0.42 };
+    this.ready = true;
     this.menu.reset();
+    this.supported = false;
 
-    this.canvas()?.addEventListener("click", this.onClick);
+    const canvas = this.canvas();
+    if (canvas) canvas.dataset.course = "terrace";
+    canvas?.addEventListener("click", this.onClick);
     window.addEventListener("blur", this.onBlur);
     document.addEventListener("visibilitychange", this.onVisibility);
     document.addEventListener("pointerlockchange", this.onPointerLock);
@@ -96,8 +171,10 @@ export class PlaygroundScene {
   }
 
   beginFrame(input: InputFrame): void {
-    this.steppedThisFrame = false;
+    if (!this.ready) return;
     this.lastDevice = input.device;
+    if (this.app.tuningUi.isVisible) this.app.tuningUi.steer(input.padMove.x, input.padMove.y);
+    if (input.tunePressed) this.toggleTuning();
     if (input.pausePressed) {
       if (this.lockLostThisFrame || !this.app.store.get().paused) {
         this.app.store.set({ paused: true });
@@ -115,93 +192,211 @@ export class PlaygroundScene {
   fixedUpdate(step: number, input: InputFrame): void {
     const scene = this.scene;
     const hero = this.hero;
-    if (!scene || !hero || this.app.store.get().paused) return;
+    if (!scene || !hero || !this.ready || this.app.store.get().paused) return;
 
-    if (!this.steppedThisFrame) {
-      this.previousPos.copyFrom(this.currentPos);
-      this.steppedThisFrame = true;
-    }
+    this.previousPos.copyFrom(this.currentPos);
+    this.prevCam.copyFrom(this.currCam);
+    this.prevLook.copyFrom(this.currLook);
+    this.prevUp.copyFrom(this.currUp);
+    this.prevFov = this.currFov;
 
-    this.pose = stepCamera(
-      this.pose,
-      { x: input.camera.x, y: input.camera.y, mouseX: input.mouse.x, mouseY: input.mouse.y },
-      step,
-    );
+    const tuning = this.app.tuning;
+    this.gravity.set(0, -tuning.gravity, 0);
+    scene.getPhysicsEngine()?.setGravity(this.gravity);
+    this.ensureCameraSphere(scene);
+
     const body = hero.aggregate.body;
-    const current = body.getLinearVelocity();
-    const grounded = this.isGrounded(scene, hero.body, body);
-    const next = desiredVelocity({
-      currentY: current.y,
-      move: input.move,
-      yaw: this.pose.yaw,
-      jump: input.jumpPressed,
-      grounded,
+    const position = toVec(hero.body.position);
+    body.getLinearVelocityToRef(this.bodyVelocity);
+    const velocity = {
+      x: this.bodyVelocity.x,
+      y: this.bodyVelocity.y,
+      z: this.bodyVelocity.z,
+    };
+    const ground = this.probe(scene, hero, position);
+    const gate = this.app.tuningUi.consumesMove;
+    const output = stepController({
+      state: this.sim,
+      position,
+      velocity,
+      actions: {
+        wish: gate ? { x: 0, y: 0, z: 0 } : wishFromStick(input.move.x, input.move.y, this.rig.yaw),
+        balance: gate ? 0 : input.move.x,
+        throttle: gate ? 0 : input.move.y,
+        jumpHeld: gate ? false : input.jump,
+        jumpPressed: gate ? false : input.jumpPressed,
+        rollHeld: gate ? false : input.attack,
+        dashPressed: gate ? false : input.actionPressed,
+      },
+      ground,
+      rail: this.nearestRail(position),
+      loopCourse: this.course?.loop ?? null,
+      targets: this.course?.targets ?? [],
+      dt: step,
+      tuning,
     });
-    this.velocity.set(next.x, next.y, next.z);
+    this.sim = output.state;
+    this.supported = output.supported;
+
+    let riding = output.ignoreLoopCollision && output.snap !== null;
+    this.velocity.set(
+      riding ? 0 : output.velocity.x,
+      riding ? 0 : output.velocity.y,
+      riding ? 0 : output.velocity.z,
+    );
+    if (output.snap) hero.body.position.set(output.snap.x, output.snap.y, output.snap.z);
+    this.aimBody(hero, output.facing, output.up);
+    body.setGravityFactor(output.gravityFactor);
     body.setLinearVelocity(this.velocity);
     body.setAngularVelocity(this.zero);
+    hero.aggregate.shape.filterCollideMask = output.ignoreLoopCollision
+      ? ~LOOP_COLLISION_BIT
+      : 0xffffffff;
+    hero.body.computeWorldMatrix(true);
+    const preStep = body.disablePreStep;
+    body.disablePreStep = false;
     scene.getPhysicsEngine()?._step(step);
+    body.disablePreStep = preStep;
     this.currentPos.copyFrom(hero.body.position);
-
-    if (input.attackPressed) this.pulse = 0.18;
-    if (input.actionPressed) {
-      this.hint = "Action";
-      this.hintTimer = 1.2;
+    if (respawnPoint(this.currentPos.y, toVec(this.safePos))) {
+      hero.body.position.copyFrom(this.safePos);
+      body.setLinearVelocity(this.zero);
+      body.setAngularVelocity(this.zero);
+      this.sim = createControllerState();
+      this.currentPos.copyFrom(this.safePos);
+      this.previousPos.copyFrom(this.safePos);
+      this.supported = true;
+      riding = false;
+      this.placeCamera(this.safePos);
+    } else if (
+      output.supported &&
+      (output.state.mode === "idle" || output.state.mode === "run") &&
+      this.currentPos.y > FALL_RESET_Y &&
+      this.standIsSafe(this.currentPos)
+    ) {
+      this.safePos.copyFrom(this.currentPos);
     }
-    this.pulse = Math.max(0, this.pulse - step);
+
+    body.getLinearVelocityToRef(this.bodyVelocity);
+    const loopRide = this.sim.mode === "loopRun" && this.sim.loopDistance >= 0;
+    const contain = loopRide ? this.loopContain() : undefined;
+    const aim = advanceCameraRig(
+      this.rig,
+      {
+        lookX: input.camera.x,
+        lookY: input.camera.y,
+        mouseX: input.mouse.x,
+        mouseY: input.mouse.y,
+        pointerLocked: document.pointerLockElement === this.canvas(),
+      },
+      toVec(this.currentPos),
+      this.sim.up,
+      riding
+        ? output.velocity
+        : { x: this.bodyVelocity.x, y: this.bodyVelocity.y, z: this.bodyVelocity.z },
+      this.sim.facing,
+      step,
+      tuning,
+      loopRide,
+      contain,
+    );
+    const desiredDistance = Math.hypot(
+      aim.desired.x - aim.lookAt.x,
+      aim.desired.y - aim.lookAt.y,
+      aim.desired.z - aim.lookAt.z,
+    );
+    if (loopRide) {
+      this.clearance = desiredDistance;
+    } else {
+      const obstruction = this.cameraClearance(aim.lookAt, aim.desired, body);
+      const allowed = cameraClearanceLimit(desiredDistance, obstruction, false, tuning);
+      this.clearance = smoothCameraClearance(this.clearance, allowed, step, tuning);
+    }
+    const span = Math.max(desiredDistance, 1e-6);
+    this.rig = aim.rig;
+    this.rig.position = {
+      x: aim.lookAt.x + ((aim.desired.x - aim.lookAt.x) * this.clearance) / span,
+      y: aim.lookAt.y + ((aim.desired.y - aim.lookAt.y) * this.clearance) / span,
+      z: aim.lookAt.z + ((aim.desired.z - aim.lookAt.z) * this.clearance) / span,
+    };
+    this.currCam.set(this.rig.position.x, this.rig.position.y, this.rig.position.z);
+    this.currLook.set(this.rig.lookAt.x, this.rig.lookAt.y, this.rig.lookAt.z);
+    this.currUp.set(this.rig.up.x, this.rig.up.y, this.rig.up.z);
+    this.currFov = this.rig.fov;
+
+    const charge = this.sim.rollCharge;
+    hero.visual.scaling.set(1 + charge * 0.14, 1 - charge * 0.2, 1 + charge * 0.14);
     this.hintTimer = Math.max(0, this.hintTimer - step);
     if (this.hintTimer === 0) this.hint = "";
-    hero.head.scaling.setAll(1 + this.pulse);
   }
 
   render(alpha: number, fps: number): void {
     const scene = this.scene;
     const hero = this.hero;
     const camera = this.camera;
-    if (!scene || !hero || !camera) return;
+    if (!scene || !hero || !camera || !this.ready) return;
 
     Vector3.LerpToRef(this.previousPos, this.currentPos, alpha, this.visualPos);
-    hero.body.position.copyFrom(this.visualPos);
+    hero.visual.position.copyFrom(this.visualPos);
+    this.aimBody(hero, this.sim.facing, this.sim.up);
 
-    const offset = cameraOffset(this.pose.yaw, this.pose.pitch);
-    this.camTarget.copyFrom(this.visualPos);
-    this.camTarget.y += 1.05;
-    this.camPos.set(
-      this.camTarget.x + offset.x,
-      this.camTarget.y + offset.y,
-      this.camTarget.z + offset.z,
-    );
+    const blend = Math.min(1, Math.max(0, alpha));
+    Vector3.LerpToRef(this.prevCam, this.currCam, blend, this.camPos);
+    Vector3.LerpToRef(this.prevLook, this.currLook, blend, this.camTarget);
+    Vector3.SlerpToRef(this.prevUp, this.currUp, blend, this.camUp);
     camera.position.copyFrom(this.camPos);
+    camera.upVector.copyFrom(this.camUp);
+    camera.fov = this.prevFov + (this.currFov - this.prevFov) * blend;
     camera.setTarget(this.camTarget);
+
+    const canvas = this.canvas();
+    if (canvas) {
+      canvas.dataset.runnerX = this.currentPos.x.toFixed(2);
+      canvas.dataset.runnerZ = this.currentPos.z.toFixed(2);
+    }
+    hero.aggregate.body.getLinearVelocityToRef(this.bodyVelocity);
+    const speed = this.bodyVelocity.length();
+    this.app.tuningUi.setReadout(modeLabel(this.sim.mode), speed, this.supported);
 
     this.app.ui.showPlay({
       paused: this.app.store.get().paused,
       deviceLabel: deviceLabel(this.lastDevice),
       fps,
       hint: this.hint,
+      status: modeLabel(this.sim.mode),
       controls: this.controlsFor(this.lastDevice),
-      onResume: () => {
-        this.app.store.set({ paused: false });
-      },
-      onCredits: () => {
-        this.app.store.set({ creditsReturn: "playground", paused: false });
-        document.exitPointerLock();
-        this.app.requestScene("credits");
-      },
+      onResume: this.onResume,
+      onCredits: this.onCredits,
     });
     scene.render();
   }
 
   exit(): void {
+    this.disposed = true;
+    this.ready = false;
+    this.cameraSphere?.dispose();
+    this.cameraSphere = null;
+    this.cameraSphereRadius = -1;
     this.canvas()?.removeEventListener("click", this.onClick);
     window.removeEventListener("blur", this.onBlur);
     document.removeEventListener("visibilitychange", this.onVisibility);
     document.removeEventListener("pointerlockchange", this.onPointerLock);
     document.exitPointerLock();
+    this.app.tuningUi.setVisible(false);
     this.scene?.dispose();
     this.scene = null;
     this.hero = null;
     this.camera = null;
+    this.course = null;
+  }
+
+  private toggleTuning(): void {
+    const next = !this.app.tuningUi.isVisible;
+    if (next && document.pointerLockElement) {
+      this.ignoreLockLoss = true;
+      document.exitPointerLock();
+    }
+    this.app.tuningUi.setVisible(next);
   }
 
   private controlsFor(device: DeviceKind): ControlSection[] {
@@ -223,17 +418,194 @@ export class PlaygroundScene {
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
-  private isGrounded(
-    scene: Scene,
-    mesh: { getBoundingInfo(): { boundingBox: { extendSize: Vector3 } } },
-    body: PhysicsBody,
-  ): boolean {
+  private probe(scene: Scene, hero: PlaceholderHero, position: Vec3): GroundQuery {
     const physics = scene.getPhysicsEngine();
-    if (!physics) return false;
-    const half = mesh.getBoundingInfo().boundingBox.extendSize.y;
-    this.rayFrom.set(this.currentPos.x, this.currentPos.y - half + 0.08, this.currentPos.z);
-    this.rayTo.set(this.currentPos.x, this.currentPos.y - half - 0.14, this.currentPos.z);
-    const hit = physics.raycast(this.rayFrom, this.rayTo, { ignoreBody: body });
-    return hit.hasHit && hit.hitNormalWorld.y > 0.45;
+    const empty: GroundQuery = {
+      hit: false,
+      normal: { x: 0, y: 1, z: 0 },
+      surface: "ground",
+      springDirection: null,
+    };
+    if (!physics) return empty;
+    const tuning = this.app.tuning;
+    const up = this.sim.up;
+    const reach = tuning.probeHalfHeight + tuning.probeLength;
+    const start = tuning.probeHalfHeight - tuning.probeSkin;
+    this.rayFrom.set(
+      position.x - up.x * start,
+      position.y - up.y * start,
+      position.z - up.z * start,
+    );
+    this.rayTo.set(position.x - up.x * reach, position.y - up.y * reach, position.z - up.z * reach);
+    let hit = physics.raycast(this.rayFrom, this.rayTo, {
+      ignoreBody: hero.aggregate.body,
+      shouldHitTriggers: true,
+    });
+    if (!hit.hasHit && this.bodyVelocity.length() >= tuning.loopEnterSpeed) {
+      const facing = this.sim.facing;
+      this.rayFrom.set(position.x, position.y, position.z);
+      this.rayTo.set(
+        position.x + facing.x * tuning.probeForward,
+        position.y + facing.y * tuning.probeForward,
+        position.z + facing.z * tuning.probeForward,
+      );
+      const ahead = physics.raycast(this.rayFrom, this.rayTo, { ignoreBody: hero.aggregate.body });
+      if (ahead.hasHit && readSurface(ahead.body?.transformNode.metadata).kind === "loop") {
+        hit = ahead;
+      }
+    }
+    if (!hit.hasHit) return empty;
+    const surface = readSurface(hit.body?.transformNode.metadata);
+    const normal = hit.hitNormalWorld;
+    return {
+      hit: true,
+      normal: { x: normal.x, y: normal.y, z: normal.z },
+      surface: surface.kind,
+      springDirection: surface.springDirection ?? null,
+    };
   }
+
+  private nearestRail(position: Vec3) {
+    const rails = this.course?.rails ?? [];
+    let best: ReturnType<typeof closestOnSpline> | null = null;
+    for (const rail of rails) {
+      const sample = closestOnSpline(rail, position);
+      if (!best || sample.gap < best.gap) best = sample;
+    }
+    const limit = this.app.tuning.railGrabRadius * 2.2;
+    if (!best || best.gap > limit) return null;
+    return best;
+  }
+
+  private ensureCameraSphere(scene: Scene): void {
+    const radius = Math.max(0.05, this.app.tuning.cameraSphere);
+    if (this.cameraSphere && Math.abs(radius - this.cameraSphereRadius) < 1e-4) return;
+    this.cameraSphere?.dispose();
+    this.cameraSphere = new PhysicsShapeSphere(Vector3.Zero(), radius, scene);
+    this.cameraSphereRadius = radius;
+  }
+
+  private cameraClearance(
+    lookAt: Vec3,
+    desired: Vec3,
+    body: PlaceholderHero["aggregate"]["body"],
+  ): number | null {
+    const physics = this.scene?.getPhysicsEngine();
+    const plugin = physics?.getPhysicsPlugin();
+    if (!physics || !plugin || !this.cameraSphere) return null;
+    this.rayFrom.set(lookAt.x, lookAt.y, lookAt.z);
+    this.rayTo.set(desired.x, desired.y, desired.z);
+    const distance = Vector3.Distance(this.rayFrom, this.rayTo);
+    if (distance < 1e-4) return null;
+    if (plugin instanceof HavokPlugin) {
+      this.castStart.reset();
+      this.castHit.reset();
+      plugin.shapeCast(
+        {
+          shape: this.cameraSphere,
+          rotation: this.castRotation,
+          startPosition: this.rayFrom,
+          endPosition: this.rayTo,
+          shouldHitTriggers: false,
+          ignoreBody: body,
+        },
+        this.castStart,
+        this.castHit,
+      );
+      if (this.castHit.hasHit) return this.castHit.hitFraction * distance;
+    }
+    const hit = physics.raycast(this.rayFrom, this.rayTo, { ignoreBody: body });
+    if (!hit.hasHit) return null;
+    return hit.hitDistance;
+  }
+
+  private placeCamera(at: Vector3): void {
+    this.rig.lookAt = { x: at.x, y: at.y + 1, z: at.z };
+    this.rig.position = { x: at.x, y: at.y + 3, z: at.z - 6 };
+    this.rig.up = { x: 0, y: 1, z: 0 };
+    this.rig.yaw = 0;
+    this.rig.pitch = 0.42;
+    this.rig.distance = 6;
+    this.seedCamera();
+    if (this.camera) {
+      this.camera.position.set(this.rig.position.x, this.rig.position.y, this.rig.position.z);
+      this.camera.upVector.set(0, 1, 0);
+      this.camTarget.set(this.rig.lookAt.x, this.rig.lookAt.y, this.rig.lookAt.z);
+      this.camera.setTarget(this.camTarget);
+    }
+  }
+
+  private loopContain(): { center: Vec3; radius: number } | undefined {
+    const course = this.course?.loop;
+    if (!course || this.sim.loopDistance < 0) return undefined;
+    const frame = sampleLoop(course, this.sim.loopDistance);
+    return {
+      center: {
+        x: frame.point.x + frame.up.x * course.radius,
+        y: frame.point.y + frame.up.y * course.radius,
+        z: frame.point.z + frame.up.z * course.radius,
+      },
+      radius: course.radius,
+    };
+  }
+
+  private standIsSafe(at: Vector3): boolean {
+    const margin = SAFE_EDGE_MARGIN;
+    const samples = [
+      this.groundSample(at.x, at.y, at.z),
+      this.groundSample(at.x + margin, at.y, at.z),
+      this.groundSample(at.x - margin, at.y, at.z),
+      this.groundSample(at.x, at.y, at.z + margin),
+      this.groundSample(at.x, at.y, at.z - margin),
+    ];
+    return samples.every((sample) => isSafeGroundSample(sample.hit, sample.kind, sample.normalY));
+  }
+
+  private groundSample(
+    x: number,
+    y: number,
+    z: number,
+  ): { hit: boolean; kind: string; normalY: number } {
+    const physics = this.scene?.getPhysicsEngine();
+    const hero = this.hero;
+    if (!physics || !hero) return { hit: false, kind: "ground", normalY: 0 };
+    this.rayFrom.set(x, y, z);
+    this.rayTo.set(x, y - 2, z);
+    const hit = physics.raycast(this.rayFrom, this.rayTo, {
+      ignoreBody: hero.aggregate.body,
+      shouldHitTriggers: true,
+    });
+    if (!hit.hasHit) return { hit: false, kind: "ground", normalY: 0 };
+    const surface = readSurface(hit.body?.transformNode.metadata);
+    return { hit: true, kind: surface.kind, normalY: hit.hitNormalWorld.y };
+  }
+
+  private seedCamera(): void {
+    this.currCam.set(this.rig.position.x, this.rig.position.y, this.rig.position.z);
+    this.prevCam.copyFrom(this.currCam);
+    this.currLook.set(this.rig.lookAt.x, this.rig.lookAt.y, this.rig.lookAt.z);
+    this.prevLook.copyFrom(this.currLook);
+    this.currUp.set(this.rig.up.x, this.rig.up.y, this.rig.up.z);
+    this.prevUp.copyFrom(this.currUp);
+    this.currFov = this.rig.fov;
+    this.prevFov = this.rig.fov;
+    this.clearance = this.rig.distance;
+  }
+
+  private aimBody(hero: PlaceholderHero, facing: Vec3, up: Vec3): void {
+    const forward = this.rayTo;
+    const upward = this.rayFrom;
+    forward.set(facing.x, facing.y, facing.z);
+    upward.set(up.x, up.y, up.z);
+    if (forward.lengthSquared() < 1e-8) forward.set(0, 0, 1);
+    if (upward.lengthSquared() < 1e-8) upward.set(0, 1, 0);
+    Quaternion.FromLookDirectionLHToRef(forward, upward, this.aim);
+    this.visualAim.copyFrom(this.aim);
+    hero.body.rotationQuaternion = this.aim;
+    hero.visual.rotationQuaternion = this.visualAim;
+  }
+}
+
+function toVec(value: Vector3): Vec3 {
+  return { x: value.x, y: value.y, z: value.z };
 }

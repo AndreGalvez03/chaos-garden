@@ -3,7 +3,7 @@ import type { GameStore, SceneId } from "./game-state";
 
 export interface SceneController {
   readonly id: SceneId;
-  enter(): void;
+  enter(): void | Promise<void>;
   exit(): void;
   beginFrame(input: InputFrame): void;
   fixedUpdate(step: number, input: InputFrame): void;
@@ -17,6 +17,8 @@ export class SceneManager {
   constructor(
     private readonly store: GameStore,
     private readonly factory: Record<SceneId, () => SceneController>,
+    private readonly onEnterError?: (error: unknown) => void,
+    private readonly canRequest: () => boolean = () => true,
   ) {}
 
   get currentId(): SceneId | null {
@@ -24,6 +26,7 @@ export class SceneManager {
   }
 
   request(id: SceneId): void {
+    if (!this.canRequest()) return;
     if (this.pending === id) return;
     if (this.pending === null && this.current?.id === id) return;
     this.pending = id;
@@ -67,8 +70,14 @@ export class SceneManager {
   private activate(id: SceneId): void {
     this.current?.exit();
     const next = this.factory[id]();
-    next.enter();
     this.current = next;
     this.store.set({ sceneId: id, paused: false });
+    try {
+      void Promise.resolve(next.enter()).catch((error: unknown) => {
+        this.onEnterError?.(error);
+      });
+    } catch (error) {
+      this.onEnterError?.(error);
+    }
   }
 }

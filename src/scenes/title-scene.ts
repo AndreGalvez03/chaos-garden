@@ -10,6 +10,7 @@ import { Scene } from "@babylonjs/core/scene";
 import type { AppContext } from "../app/context";
 import type { InputFrame } from "../input/types";
 import { MenuCursor } from "../ui/menu-nav";
+import { hasStartupFailure } from "../ui/overlay";
 
 export class TitleScene {
   readonly id = "title" as const;
@@ -60,6 +61,7 @@ export class TitleScene {
   }
 
   beginFrame(input: InputFrame): void {
+    if (hasStartupFailure()) return;
     if (input.confirmPressed) {
       this.app.requestScene("playground");
       return;

@@ -24,8 +24,8 @@ export interface LookInput {
 }
 
 /**
- * Direct velocity for the gray-box yard. The body stops when the stick returns
- * to center. Momentum, dashes, and rails belong to the movement milestone.
+ * Direct velocity for checks that want an instant stick response.
+ * The course steps the movement state machine instead.
  */
 export function desiredVelocity(args: {
   currentY: number;

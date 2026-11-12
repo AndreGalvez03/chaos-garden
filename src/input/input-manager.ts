@@ -27,11 +27,21 @@ export class InputManager {
     action: false,
     pause: false,
     confirm: false,
+    tune: false,
   };
   private device: DeviceKind = "keyboard";
   private preferredPad: number | null = null;
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (insideTuning(event.target)) {
+      const focus = event.target instanceof HTMLElement ? event.target : null;
+      if (event.code === "Escape") {
+        focus?.blur();
+        return;
+      }
+      if (event.code !== "Backquote") return;
+      focus?.blur();
+    }
     if (SCROLL_CODES.has(event.code) && !isTypingTarget(event.target)) {
       event.preventDefault();
     }
@@ -132,4 +142,8 @@ function padIsActive(pad: Gamepad, deadzone: number): boolean {
 
 function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+}
+
+function insideTuning(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("#tuning") !== null;
 }

@@ -58,6 +58,33 @@ describe("scene manager", () => {
     scenes.beginFrame(idle);
     expect(log).toEqual(["enter:title", "frame:title"]);
   });
+
+  it("reports a synchronous enter failure", () => {
+    const store = new GameStore();
+    const errors: unknown[] = [];
+    const scenes = new SceneManager(
+      store,
+      {
+        title: () => fakeScene("title", []),
+        playground: () => {
+          const scene = fakeScene("playground", []);
+          return {
+            ...scene,
+            enter() {
+              throw new Error("wasm failed to load");
+            },
+          };
+        },
+        credits: () => fakeScene("credits", []),
+      },
+      (error) => {
+        errors.push(error);
+      },
+    );
+    scenes.start("playground");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(Error);
+  });
 });
 
 describe("game loop", () => {
