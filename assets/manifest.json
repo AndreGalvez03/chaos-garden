@@ -1,0 +1,12 @@
+{
+  "assets": [
+    {
+      "path": "public/favicon.svg",
+      "title": "Sprout mark",
+      "author": "André Gálvez",
+      "sourceUrl": "https://github.com/AndreGalvez03/chaos-garden",
+      "license": "CC-BY-4.0",
+      "original": true
+    }
+  ]
+}
